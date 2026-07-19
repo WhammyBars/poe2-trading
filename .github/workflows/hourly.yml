@@ -28,6 +28,8 @@ jobs:
         run: node --disable-warning=ExperimentalWarning src/fetch.js
 
       - name: Build dashboard
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
         run: node --disable-warning=ExperimentalWarning src/report.js
 
       - name: Commit and push updated data

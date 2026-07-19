@@ -1,0 +1,67 @@
+name: Log a purchase
+
+# Manual-only. Appends one entry to the encrypted purchase log
+# (docs/purchases.enc.json) without the password ever leaving GitHub's
+# secret store or being typed anywhere outside this form.
+on:
+  workflow_dispatch:
+    inputs:
+      item_key:
+        description: "category:itemId, e.g. Currency:chaos (resolved against data/prices.sqlite)"
+        required: true
+      category:
+        description: "Category label, e.g. Currency"
+        required: true
+      item_id:
+        description: "poe.ninja item id, e.g. chaos"
+        required: true
+      name:
+        description: "Display name, e.g. Chaos Orb"
+        required: true
+      qty:
+        description: "Quantity purchased"
+        required: true
+      price:
+        description: "Price paid per unit"
+        required: true
+      currency:
+        description: "Currency the price is denominated in"
+        required: false
+        default: "divine"
+      note:
+        description: "Optional note"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  log-purchase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Append purchase to encrypted log
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PURCHASE_ITEM_KEY: ${{ inputs.item_key }}
+          PURCHASE_CATEGORY: ${{ inputs.category }}
+          PURCHASE_ITEM_ID: ${{ inputs.item_id }}
+          PURCHASE_NAME: ${{ inputs.name }}
+          PURCHASE_QTY: ${{ inputs.qty }}
+          PURCHASE_PRICE: ${{ inputs.price }}
+          PURCHASE_CURRENCY: ${{ inputs.currency }}
+          PURCHASE_NOTE: ${{ inputs.note }}
+        run: node --disable-warning=ExperimentalWarning src/logPurchaseCi.js
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/purchases.enc.json
+          git commit -m "Log purchase: ${{ inputs.qty }}x ${{ inputs.name }}"
+          git push

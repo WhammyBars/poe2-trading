@@ -127,6 +127,49 @@ function seasonalitySection(seasonality) {
   </section>`;
 }
 
+function pctBadge(pct) {
+  if (pct == null) return `<span class="pill pill-neutral">n/a</span>`;
+  const cls = pct >= 0 ? "pill-good" : "pill-critical";
+  const sign = pct >= 0 ? "+" : "";
+  return `<span class="pill ${cls}">${sign}${pct.toFixed(1)}%</span>`;
+}
+
+function holdingsSection(holdings) {
+  if (!holdings || holdings.length === 0) {
+    return `<section class="section">
+      <h2>Your holdings</h2>
+      <div class="empty-state">
+        <div class="empty-title">No purchases logged yet</div>
+        <div class="empty-body">Tell Claude what you bought (item, quantity, price paid) and it'll show up here with a personalized read against your actual cost basis.</div>
+      </div>
+    </section>`;
+  }
+
+  const rowsHtml = holdings
+    .map(
+      (h) => `<tr>
+        <td>${escapeHtml(h.name)}</td>
+        <td>${escapeHtml(h.category)}</td>
+        <td class="num">${h.qty}</td>
+        <td class="num">${fmtNum(h.avgCost)} ${escapeHtml(h.currency)}</td>
+        <td class="num">${h.currentValue != null ? `${fmtNum(h.currentValue)} ${escapeHtml(h.currency)}` : "n/a"}</td>
+        <td class="num">${pctBadge(h.pctChange)}</td>
+        <td>${h.verdict ? verdictPill(h.verdict, h.provisional) : `<span class="pill pill-neutral">n/a</span>`}</td>
+        <td class="reason">${h.reason ? escapeHtml(h.reason) : "Item no longer in tracked categories."}</td>
+      </tr>`
+    )
+    .join("\n");
+
+  return `<section class="section">
+    <h2>Your holdings</h2>
+    <p class="section-note">Cost basis is the weighted average of everything logged as purchased. This is your P/L laid next to the same market signal used everywhere else on this page &mdash; still informational only, the call is yours.</p>
+    <table>
+      <thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Current</th><th class="num">P/L</th><th>Signal</th><th>Why</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </section>`;
+}
+
 function tableRows(rows) {
   return rows
     .map(
@@ -144,7 +187,7 @@ function tableRows(rows) {
     .join("\n");
 }
 
-export function buildDashboard({ league, generatedAt, trailingHours, rows, seasonality, buyCards, sellCards }) {
+export function buildDashboard({ league, generatedAt, trailingHours, rows, seasonality, buyCards, sellCards, holdings }) {
   const counts = { BUY: 0, HOLD: 0, SELL: 0 };
   for (const r of rows) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
   const daysOfHistory = seasonality.daysSpanned;
@@ -300,6 +343,8 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
     ${statTile("History depth", `${daysOfHistory}d`, "grows automatically while watch runs")}
   </div>
 
+  ${holdingsSection(holdings)}
+
   <section class="section">
     <h2>Top opportunities</h2>
     <p class="section-note">Filtered to reasonably liquid items only (excludes thin markets where the price swing could just be one or two odd listings).</p>
@@ -383,6 +428,97 @@ ${tableRows(rows)}
         return va < vb ? -sortState.dir : va > vb ? sortState.dir : 0;
       });
       idxs.forEach(function(i) { tbody.appendChild(trs.find(function(tr) { return parseInt(tr.dataset.idx, 10) === i; })); });
+    });
+  });
+})();
+</script>
+</body>
+</html>
+`;
+}
+
+// The actual published docs/index.html: a minimal shell containing only a
+// password form and the AES-GCM ciphertext of the real dashboard (built above
+// by buildDashboard). Without the password there is nothing readable here —
+// no hidden div, no plaintext data sitting in the DOM waiting to be revealed.
+// Decryption uses the browser's native WebCrypto (crypto.subtle), the same
+// PBKDF2-SHA256 + AES-256-GCM parameters used to encrypt it in src/crypto.js.
+// On success the whole document is replaced via document.write, so the
+// decrypted page's own <script> (the sort/filter logic above) runs normally.
+export function buildGateShell({ salt, iv, ciphertext, pbkdf2Iterations }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoE2 Arbitrage Advisory</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0d0d0d; color: #ffffff;
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    background: #1a1a19; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px;
+    padding: 2rem; width: 100%; max-width: 340px;
+  }
+  h1 { font-size: 1.05rem; margin: 0 0 1.25rem; text-align: center; font-weight: 600; }
+  input[type=password] {
+    width: 100%; padding: 0.6rem 0.75rem; border-radius: 8px; margin-bottom: 0.75rem;
+    background: #0d0d0d; border: 1px solid rgba(255,255,255,0.15); color: #ffffff; font-size: 0.9rem;
+  }
+  button {
+    width: 100%; padding: 0.6rem; border-radius: 8px; border: none; cursor: pointer;
+    background: #ffffff; color: #0d0d0d; font-weight: 600; font-size: 0.9rem;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .error { color: #e66767; font-size: 0.8rem; margin-top: 0.75rem; text-align: center; min-height: 1.1em; }
+</style>
+</head>
+<body>
+  <form class="card" id="gate-form">
+    <h1>PoE2 Arbitrage Advisory</h1>
+    <input type="password" id="gate-password" autocomplete="current-password" autofocus>
+    <button type="submit" id="gate-submit">Unlock</button>
+    <div class="error" id="gate-error"></div>
+  </form>
+<script>
+(function() {
+  var salt = "${salt}", iv = "${iv}", ciphertext = "${ciphertext}", iterations = ${pbkdf2Iterations};
+
+  function b64ToBytes(b64) {
+    var bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  async function tryDecrypt(password) {
+    var passKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
+    var key = await crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: b64ToBytes(salt), iterations: iterations, hash: "SHA-256" },
+      passKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+    );
+    var plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(iv) }, key, b64ToBytes(ciphertext));
+    return new TextDecoder().decode(plainBuf);
+  }
+
+  document.getElementById("gate-form").addEventListener("submit", function(e) {
+    e.preventDefault();
+    var btn = document.getElementById("gate-submit");
+    var err = document.getElementById("gate-error");
+    var pw = document.getElementById("gate-password").value;
+    btn.disabled = true;
+    err.textContent = "";
+    tryDecrypt(pw).then(function(html) {
+      document.open();
+      document.write(html);
+      document.close();
+    }).catch(function() {
+      btn.disabled = false;
+      err.textContent = "Wrong password.";
     });
   });
 })();

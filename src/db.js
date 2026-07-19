@@ -102,6 +102,31 @@ export function getItemsForCategory(category) {
   return latestPerCategoryStmt.all(category);
 }
 
+const findByNameStmt = db.prepare(`
+  SELECT item_key AS itemKey, category, item_id AS itemId, name, variant
+  FROM items
+  WHERE name LIKE ? COLLATE NOCASE
+  ORDER BY name ASC
+`);
+
+// Fuzzy (substring, case-insensitive) item lookup — used to resolve a purchase
+// log entry's free-text item name to a concrete category+itemId.
+export function findItemsByName(nameSubstring) {
+  return findByNameStmt.all(`%${nameSubstring}%`);
+}
+
+const currentValueStmt = db.prepare(`
+  SELECT primary_value AS primaryValue, primary_currency AS primaryCurrency
+  FROM price_history
+  WHERE item_key = ?
+  ORDER BY ts DESC
+  LIMIT 1
+`);
+
+export function getCurrentValue(key) {
+  return currentValueStmt.get(key) ?? null;
+}
+
 const allHistoryForCategoryStmt = db.prepare(`
   SELECT ph.item_key AS itemKey, ph.ts, ph.primary_value AS primaryValue
   FROM price_history ph

@@ -52,6 +52,7 @@ npm run watch    # fetch + report every hour (default), Ctrl+C to stop
 Env vars:
 - `POE2_POLL_INTERVAL_MINUTES` (default `60`) — polling cadence for `watch`.
 - `POE2_TRAILING_HOURS` (default `72`) — trailing window used for the z-score baseline.
+- `DASHBOARD_PASSWORD` (required) — see "Password gate" below. `npm run report` refuses to run without it.
 
 ## Running in the cloud (GitHub Actions + Pages)
 
@@ -66,6 +67,54 @@ Don't run `npm run watch` locally at the same time as the cloud job — both
 would write to the same `data/prices.sqlite` independently and fight over
 which version gets pushed. Use `npm run fetch` / `npm run report` locally
 for one-off manual checks; let the workflow own the continuous polling.
+
+## Password gate
+
+The repo (and therefore `data/prices.sqlite`, the raw price history) is
+public, since free GitHub Pages requires that. The published dashboard itself
+is not readable without a password, though — `docs/index.html` is a minimal
+shell containing only an AES-256-GCM ciphertext (key derived from the
+password via PBKDF2-SHA256, both via the browser's native WebCrypto, no
+libraries). Without the password there's nothing to reveal — no hidden div,
+no plaintext sitting in the DOM — the real dashboard HTML doesn't exist
+client-side until it's decrypted in-browser after a correct password. See
+`src/crypto.js` and `buildGateShell` in `src/dashboardHtml.js`.
+
+**What this is and isn't**: this stops casual access (search engines, someone
+finding the repo, a link shared without the password). It does **not** stop a
+determined attacker who captures the ciphertext and brute-forces it offline —
+that's a function of password strength, since there's no rate-limiting on an
+offline guessing attempt against a static file. Pick something long and
+random, not a word. If you ever want protection that can't be brute-forced at
+all, that requires real server-side auth (e.g. Cloudflare Access in front of
+the page) — a bigger infra change, not done here.
+
+**Setup**: add a `DASHBOARD_PASSWORD` repository secret (Settings → Secrets
+and variables → Actions → New repository secret). The password never appears
+in the repo, in a commit, or in this codebase — only inside the GitHub
+Actions runner as a secret, and transiently in the visitor's browser memory
+while decrypting.
+
+## Purchase log & personalized holdings
+
+Tell Claude what you bought (item, quantity, price paid) and it resolves the
+item against `data/prices.sqlite`, then triggers the `Log a purchase` GitHub
+Actions workflow (`.github/workflows/log-purchase.yml`, `workflow_dispatch`)
+with those details as inputs. That workflow — running inside GitHub's
+infrastructure, with access to the `DASHBOARD_PASSWORD` secret — decrypts the
+existing `docs/purchases.enc.json` (if any), appends the new entry, re-encrypts,
+and commits. The password never has to leave GitHub or appear in this
+conversation.
+
+The hourly build (`src/report.js`) decrypts `docs/purchases.enc.json`,
+computes a weighted-average cost basis per item (`src/purchases.js`), and
+renders a "Your holdings" section showing P/L against that cost basis next to
+the same BUY/HOLD/SELL signal used everywhere else on the page — still just
+information, not a recommendation to act.
+
+`data/purchases.json` is intentionally not a thing — there is no plaintext
+copy of your purchase history anywhere in the repo, only the encrypted
+`docs/purchases.enc.json`.
 
 ## How the signal works
 

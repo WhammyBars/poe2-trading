@@ -6,7 +6,9 @@ import { getItemsForCategory, getTrailingHistory, closeDb } from "./db.js";
 import { computeSignal } from "./signal.js";
 import { computeSeasonality } from "./seasonality.js";
 import { fetchIndexState, pickCurrentLeague } from "./api.js";
-import { buildDashboard } from "./dashboardHtml.js";
+import { buildDashboard, buildGateShell } from "./dashboardHtml.js";
+import { loadPurchases, aggregateHoldings } from "./purchases.js";
+import { encryptString, PBKDF2_ITERATIONS } from "./crypto.js";
 import { isMain } from "./util.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +43,7 @@ function buildReportRows() {
       });
 
       rows.push({
+        itemKey: item.itemKey,
         category: cat.label,
         name: item.name + (item.variant && item.variant !== "Normal" ? ` (${item.variant})` : ""),
         value: current.primaryValue,
@@ -101,7 +104,34 @@ function printConsoleReport(rows) {
   console.log("");
 }
 
+// Joins logged purchases (cost basis) against this run's fresh market rows,
+// so the "Your holdings" table shows real P/L next to the same signal used everywhere else.
+function buildHoldings(purchaseHoldings, rows) {
+  const rowsByKey = new Map(rows.map((r) => [r.itemKey, r]));
+  return purchaseHoldings.map((h) => {
+    const row = rowsByKey.get(h.itemKey);
+    const currentValue = row?.value ?? null;
+    const pctChange = currentValue != null && h.avgCost > 0 ? ((currentValue - h.avgCost) / h.avgCost) * 100 : null;
+    return {
+      ...h,
+      currentValue,
+      pctChange,
+      verdict: row?.verdict ?? null,
+      provisional: row?.provisional ?? false,
+      reason: row?.reason ?? null,
+    };
+  });
+}
+
 export async function runReport() {
+  const password = process.env.DASHBOARD_PASSWORD;
+  if (!password) {
+    throw new Error(
+      "DASHBOARD_PASSWORD is not set. The dashboard is published encrypted, so this is required — " +
+        "set it as a GitHub Actions secret for CI, or export it in your shell for local runs."
+    );
+  }
+
   const rows = buildReportRows();
   printConsoleReport(rows);
 
@@ -110,7 +140,10 @@ export async function runReport() {
   const seasonality = computeSeasonality(CATEGORIES.map((c) => c.key));
   const { buyCards, sellCards } = pickTopOpportunities(rows);
 
-  const html = buildDashboard({
+  const purchases = await loadPurchases(password);
+  const holdings = buildHoldings(aggregateHoldings(purchases), rows);
+
+  const innerHtml = buildDashboard({
     league: league?.displayName ?? "unknown",
     generatedAt: new Date().toISOString(),
     trailingHours: TRAILING_HOURS,
@@ -118,14 +151,18 @@ export async function runReport() {
     seasonality,
     buyCards,
     sellCards,
+    holdings,
   });
+
+  const encrypted = await encryptString(innerHtml, password);
+  const gateHtml = buildGateShell({ ...encrypted, pbkdf2Iterations: PBKDF2_ITERATIONS });
 
   // docs/ so GitHub Pages can serve this directly from the main branch.
   const outDir = path.join(__dirname, "..", "docs");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "index.html");
-  fs.writeFileSync(outPath, html, "utf8");
-  console.log(`HTML dashboard written to ${outPath}`);
+  fs.writeFileSync(outPath, gateHtml, "utf8");
+  console.log(`Encrypted dashboard written to ${outPath} (${holdings.length} holding(s) from ${purchases.length} logged purchase(s))`);
 }
 
 if (isMain(import.meta.url)) {
