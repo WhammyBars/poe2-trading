@@ -1,0 +1,16 @@
+{
+  "name": "poe2-arbitrage-tool",
+  "version": "1.0.0",
+  "description": "Informational price-trend advisory tool for PoE2 currency and lineage support gems, sourced from poe.ninja. No trade automation.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "fetch": "node --disable-warning=ExperimentalWarning src/fetch.js",
+    "report": "node --disable-warning=ExperimentalWarning src/report.js",
+    "watch": "node --disable-warning=ExperimentalWarning src/watch.js",
+    "analyze": "node --disable-warning=ExperimentalWarning src/analyze.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

@@ -1,0 +1,43 @@
+name: Hourly price fetch
+
+on:
+  schedule:
+    # :05 past the hour, not :00 — avoids the top-of-hour congestion where
+    # scheduled-workflow triggers across GitHub are most likely to be delayed.
+    - cron: "5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hourly-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch-and-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Fetch latest prices
+        run: node --disable-warning=ExperimentalWarning src/fetch.js
+
+      - name: Build dashboard
+        run: node --disable-warning=ExperimentalWarning src/report.js
+
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/prices.sqlite docs/index.html
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Hourly price update: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          fi
