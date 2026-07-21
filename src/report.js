@@ -20,6 +20,13 @@ const TRAILING_HOURS = Number(process.env.POE2_TRAILING_HOURS ?? 72);
 const MIN_LIQUID_VOLUME = 20;
 const TOP_N = 6;
 
+// Per-unit value floor (all categories price in divine already, no conversion
+// needed): anything cheaper only makes sense to trade in bulk, which isn't
+// worth tracking here. Applies to the main table, top-opportunities cards, and
+// the signal-count tiles — NOT to "Your holdings", which always shows real P/L
+// for whatever you actually bought regardless of price.
+const MIN_VALUE_DIVINE = Number(process.env.POE2_MIN_VALUE_DIVINE ?? 1);
+
 function sinceTimestamp(hours) {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
@@ -132,7 +139,11 @@ export async function runReport() {
     );
   }
 
-  const rows = buildReportRows();
+  const allRows = buildReportRows();
+  // Everything below MIN_VALUE_DIVINE only trades sensibly in bulk — drop it
+  // from the table/cards/tiles. Holdings still joins against allRows so a
+  // cheap item you already bought keeps showing real P/L instead of "n/a".
+  const rows = allRows.filter((r) => r.value >= MIN_VALUE_DIVINE);
   printConsoleReport(rows);
 
   const indexState = await fetchIndexState();
@@ -141,7 +152,7 @@ export async function runReport() {
   const { buyCards, sellCards } = pickTopOpportunities(rows);
 
   const purchases = await loadPurchases(password);
-  const holdings = buildHoldings(aggregateHoldings(purchases), rows);
+  const holdings = buildHoldings(aggregateHoldings(purchases), allRows);
 
   const innerHtml = buildDashboard({
     league: league?.displayName ?? "unknown",
@@ -152,6 +163,7 @@ export async function runReport() {
     buyCards,
     sellCards,
     holdings,
+    minValueDivine: MIN_VALUE_DIVINE,
   });
 
   const encrypted = await encryptString(innerHtml, password);

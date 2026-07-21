@@ -187,7 +187,7 @@ function tableRows(rows) {
     .join("\n");
 }
 
-export function buildDashboard({ league, generatedAt, trailingHours, rows, seasonality, buyCards, sellCards, holdings }) {
+export function buildDashboard({ league, generatedAt, trailingHours, rows, seasonality, buyCards, sellCards, holdings, minValueDivine }) {
   const counts = { BUY: 0, HOLD: 0, SELL: 0 };
   for (const r of rows) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
   const daysOfHistory = seasonality.daysSpanned;
@@ -336,7 +336,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
   </div>
 
   <div class="stat-row">
-    ${statTile("Tracked items", rows.length)}
+    ${statTile("Tracked items", rows.length, `≥${minValueDivine} divine only`)}
     ${statTile("Buy signals", counts.BUY ?? 0)}
     ${statTile("Hold", counts.HOLD ?? 0)}
     ${statTile("Sell signals", counts.SELL ?? 0)}
@@ -347,7 +347,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
 
   <section class="section">
     <h2>Top opportunities</h2>
-    <p class="section-note">Filtered to reasonably liquid items only (excludes thin markets where the price swing could just be one or two odd listings).</p>
+    <p class="section-note">Filtered to reasonably liquid items worth at least ${minValueDivine} divine (excludes thin markets, and anything cheap enough that trading it only makes sense in bulk).</p>
     <div class="opp-grid">
       <div>
         <div class="opp-col-title">Buy &mdash; sharpest liquid dip</div>
@@ -364,7 +364,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
 
   <section class="section">
     <h2>All tracked items</h2>
-    <p class="section-note">Sorted by volume by default &mdash; most actively traded first. Volume is total value traded in the primary currency (divine), not a trade count, so a cheap bulk currency and an expensive item can post similar numbers for very different real trade counts. Click any column header to re-sort.</p>
+    <p class="section-note">Limited to items worth at least ${minValueDivine} divine per unit (cheaper stuff only trades sensibly in bulk, not worth surfacing here). Sorted by volume by default &mdash; most actively traded first. Volume is total value traded in the primary currency (divine), not a trade count, so a cheap bulk currency and an expensive item can post similar numbers for very different real trade counts. Click any column header to re-sort.</p>
     <div class="filter-row" id="filters">
       <button class="filter-btn active" data-filter="ALL">All</button>
       <button class="filter-btn" data-filter="BUY">Buy</button>
