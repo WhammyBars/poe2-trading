@@ -16,6 +16,20 @@ function fmtWhole(n) {
   return Math.round(n).toLocaleString();
 }
 
+function fmtSingaporeTime(isoString) {
+  const formatted = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(new Date(isoString));
+  return `${formatted} SGT`;
+}
+
 // Below this, a single-unit price is a market rate, not a real in-game trade —
 // divine orbs are the coarsest common tender, so anything sub-3-divine only
 // trades sensibly in bulk. Pair the unit price with what a LOT_SIZE-unit lot
@@ -351,7 +365,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
 <div class="wrap">
   <h1>PoE2 Arbitrage Advisory</h1>
   <div class="meta">
-    League <b>${escapeHtml(league)}</b> &middot; generated <b>${escapeHtml(generatedAt)}</b> &middot;
+    League <b>${escapeHtml(league)}</b> &middot; generated <b>${escapeHtml(fmtSingaporeTime(generatedAt))}</b> &middot;
     trailing window <b>${trailingHours}h</b> &middot; local history <b>${daysOfHistory} day(s)</b><br>
     Informational only &mdash; this does not trade, whisper, or automate anything in-game. Source: poe.ninja public data.
     <code>*</code> = provisional read (not enough local samples yet for a z-score, using poe.ninja's own sparkline instead).
