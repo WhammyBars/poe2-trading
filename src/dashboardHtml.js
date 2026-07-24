@@ -12,6 +12,27 @@ function fmtNum(n, digits = 4) {
   return n == null ? "" : n.toFixed(digits);
 }
 
+function fmtWhole(n) {
+  return Math.round(n).toLocaleString();
+}
+
+// Below this, a single-unit price is a market rate, not a real in-game trade —
+// divine orbs are the coarsest common tender, so anything sub-3-divine only
+// trades sensibly in bulk. Pair the unit price with what a LOT_SIZE-unit lot
+// goes for, so there's a whole number to actually act on.
+const BULK_LOT_THRESHOLD_DIVINE = 3;
+const LOT_SIZE = 10;
+
+function valueDisplay(value, currency) {
+  if (value == null) return "";
+  const cur = escapeHtml(currency ?? "");
+  const unit = `${fmtNum(value)} ${cur}`;
+  const alreadyWhole = Math.abs(value - Math.round(value)) < 0.02;
+  if (value >= BULK_LOT_THRESHOLD_DIVINE || !currency || alreadyWhole) return unit;
+  const lot = fmtWhole(value * LOT_SIZE);
+  return `${unit} <span class="lot-hint" title="Only trades sensibly in bulk &mdash; a ${LOT_SIZE}-unit lot runs about ${lot} ${cur}.">&middot; ~${lot}/${LOT_SIZE}</span>`;
+}
+
 function sparklinePath(data, w = 100, h = 28, pad = 3) {
   if (!data || data.length < 2) return { path: "", lastX: 0, lastY: h / 2 };
   const min = Math.min(...data);
@@ -50,7 +71,7 @@ function opportunityCard(r) {
       <span class="opp-name">${escapeHtml(r.name)}</span>
       ${verdictPill(r.verdict, r.provisional)}
     </div>
-    <div class="opp-sub">${escapeHtml(r.category)} &middot; ${fmtNum(r.value)} ${escapeHtml(r.currency ?? "")}</div>
+    <div class="opp-sub">${escapeHtml(r.category)} &middot; ${valueDisplay(r.value, r.currency)}</div>
     ${sparklineSvg(r.sparkData, r.verdict)}
     <div class="opp-reason">${escapeHtml(r.reason)}</div>
   </div>`;
@@ -151,8 +172,8 @@ function holdingsSection(holdings) {
         <td>${escapeHtml(h.name)}</td>
         <td>${escapeHtml(h.category)}</td>
         <td class="num">${h.qty}</td>
-        <td class="num">${fmtNum(h.avgCost)} ${escapeHtml(h.currency)}</td>
-        <td class="num">${h.currentValue != null ? `${fmtNum(h.currentValue)} ${escapeHtml(h.currency)}` : "n/a"}</td>
+        <td class="num">${valueDisplay(h.avgCost, h.currency)}</td>
+        <td class="num">${h.currentValue != null ? valueDisplay(h.currentValue, h.currency) : "n/a"}</td>
         <td class="num">${pctBadge(h.pctChange)}</td>
         <td>${h.verdict ? verdictPill(h.verdict, h.provisional) : `<span class="pill pill-neutral">n/a</span>`}</td>
         <td class="reason">${h.reason ? escapeHtml(h.reason) : "Item no longer in tracked categories."}</td>
@@ -176,7 +197,7 @@ function tableRows(rows) {
       (r, i) => `<tr data-verdict="${r.verdict}" data-idx="${i}">
         <td>${escapeHtml(r.category)}</td>
         <td>${escapeHtml(r.name)}</td>
-        <td class="num">${fmtNum(r.value)} ${escapeHtml(r.currency ?? "")}</td>
+        <td class="num">${valueDisplay(r.value, r.currency)}</td>
         <td class="num">${r.volume != null ? Math.round(r.volume).toLocaleString() : ""}</td>
         <td>${verdictPill(r.verdict, r.provisional)}</td>
         <td class="num">${r.z == null ? "n/a" : r.z.toFixed(2)}</td>
@@ -301,6 +322,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
   th:hover { color: var(--text-primary); }
   tbody tr:last-child td { border-bottom: none; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .lot-hint { color: var(--text-muted); font-size: 0.85em; font-weight: 400; cursor: help; }
   .reason { color: var(--text-secondary); font-size: 0.78rem; max-width: 32ch; }
   .spark { display: block; }
 
@@ -333,6 +355,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
     trailing window <b>${trailingHours}h</b> &middot; local history <b>${daysOfHistory} day(s)</b><br>
     Informational only &mdash; this does not trade, whisper, or automate anything in-game. Source: poe.ninja public data.
     <code>*</code> = provisional read (not enough local samples yet for a z-score, using poe.ninja's own sparkline instead).
+    <code>~X/${LOT_SIZE}</code> = a ${LOT_SIZE}-unit lot price, shown for anything under ${BULK_LOT_THRESHOLD_DIVINE} divine per unit since those only trade sensibly in bulk.
   </div>
 
   <div class="stat-row">
