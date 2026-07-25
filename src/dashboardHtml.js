@@ -155,6 +155,41 @@ function emptyState(title, body) {
   </div>`;
 }
 
+function playbookCell(bucket) {
+  if (!bucket) return `<span class="pill pill-neutral">no reliable pattern yet</span>`;
+  const pct = (bucket.rate * 100).toFixed(0);
+  return `${escapeHtml(bucket.label)} <span class="rate-note" title="95% Wilson-score floor ${(bucket.rateLowerBound * 100).toFixed(0)}%, n=${bucket.n}${bucket.preliminary ? ", preliminary" : ""}">(${pct}%, n=${bucket.n})</span>`;
+}
+
+// One row per tracked category, independent of any live BUY/SELL signal —
+// this is the direct "what do I buy and on which day, what do I sell and on
+// which day" answer, since the pooled/global calendar chart above gets
+// swamped by economy-wide drift (see its section-note) and can't show that
+// per category.
+function categoryPlaybookSection(categoryPlaybook) {
+  if (!categoryPlaybook || categoryPlaybook.length === 0) return "";
+  const rowsHtml = categoryPlaybook
+    .map(
+      (r) => `<tr>
+        <td>${escapeHtml(r.category)}</td>
+        <td>${playbookCell(r.dipDay)}</td>
+        <td>${playbookCell(r.dipHour)}</td>
+        <td>${playbookCell(r.pumpDay)}</td>
+        <td>${playbookCell(r.pumpHour)}</td>
+      </tr>`
+    )
+    .join("\n");
+
+  return `<section class="section">
+    <h2>Category buy/sell calendar</h2>
+    <p class="section-note">Per-category (not pooled) reliable timing windows: a day/hour only appears here if, at 95% confidence, its down-tick rate (buy day/hour) or up-tick rate (sell day/hour) is above 50% &mdash; see the "Calendar patterns" section below for what that means. Applies to the category as a whole, not any single item within it (too few per-item samples yet). "No reliable pattern yet" is an honest result, not a bug &mdash; not every category has a real cyclical edge on top of its overall trend.</p>
+    <table>
+      <thead><tr><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </section>`;
+}
+
 function seasonalitySection(seasonality) {
   const { hourOfDay, dayOfWeek, hourDaysSpanned, dayDaysSpanned, hourStatus, dayStatus, thresholds } = seasonality;
 
@@ -178,7 +213,7 @@ function seasonalitySection(seasonality) {
 
   return `<section class="section">
     <h2>Calendar patterns</h2>
-    <p class="section-note">Average % price change bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, pooled across every tracked category. Hour-of-day is hour-over-hour change from our own local collection; day-of-week is day-over-day change from poe.ninja's own daily-close history per item (goes back to league start, so this fills in fast). Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). A <span class="reliable-dot">&#9679;</span> next to a label means that bucket clears a 95%-confidence bar for its down-tick rate being above 50% (hover the bar for the exact numbers) &mdash; without the dot, the dip is still just an average that could be a few outliers, not a real edge. The same calculation run per-category drives the "historically dips&hellip;" note on the Buy cards above, and only fires when a bucket earns that dot.</p>
+    <p class="section-note">Average % price change bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, <b>pooled across every tracked category</b> &mdash; for the same numbers broken out per category (what actually answers "buy on which day, sell on which day"), see "Category buy/sell calendar" above; this chart is background context, not a buy/sell instruction on its own. Hour-of-day is hour-over-hour change from our own local collection; day-of-week is day-over-day change from poe.ninja's own daily-close history per item (goes back to league start, so this fills in fast). Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window) &mdash; pooling everything together usually skews red/positive even when individual categories have real dip windows, because it's dominated by the whole economy's overall drift over the league. A <span class="reliable-dot">&#9679;</span> next to a label means that bucket clears a 95%-confidence bar for its down-tick rate being above 50% (hover the bar for the exact numbers).</p>
     <div class="two-col">
       <div>
         <h3>By hour of day (Singapore time)</h3>
@@ -283,6 +318,7 @@ export function buildDashboard({
   trailingHours,
   rows,
   seasonality,
+  categoryPlaybook,
   buyCards,
   sellCards,
   holdings,
@@ -405,6 +441,7 @@ export function buildDashboard({
   tbody tr:last-child td { border-bottom: none; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .lot-hint { color: var(--text-muted); font-size: 0.85em; font-weight: 400; cursor: help; }
+  .rate-note { color: var(--text-muted); font-size: 0.85em; font-weight: 400; cursor: help; }
   .reason { color: var(--text-secondary); font-size: 0.78rem; max-width: 32ch; }
   .spark { display: block; }
 
@@ -473,6 +510,8 @@ export function buildDashboard({
     </div>
   </section>
 
+  ${categoryPlaybookSection(categoryPlaybook)}
+
   ${seasonalitySection(seasonality)}
 
   <section class="section">
@@ -509,10 +548,11 @@ ${tableRows(rows)}
     confirmed by sparkline momentum, or, before that, poe.ninja's own 7-point sparkline trend as a provisional read.
     Target prices (buy &le; / sell &ge;) are the trailing mean &plusmn; the same z-score threshold used for the verdict &mdash;
     i.e. the price at which this tool's own signal would flip, rounded to a whole divine orb (floored for buy, ceiled for
-    sell) since that's the smallest unit you can actually list at. The "historically dips&hellip;" timing note is that
-    item's category, not the item itself (too few per-item samples yet), and only fires when a bucket's down-tick rate
-    clears a 95% Wilson-score confidence floor above 50% &mdash; i.e. not just an average dragged down by a few big drops,
-    but a rate that's statistically likely to be a real lean rather than chance. That still isn't a guarantee: the
+    sell) since that's the smallest unit you can actually list at. The "Category buy/sell calendar" table and each Buy
+    card's timing note are both about that item's category, not the item itself (too few per-item samples yet); a
+    day/hour only appears when its down-tick rate (buy) or up-tick rate (sell) clears a 95% Wilson-score confidence
+    floor above 50% &mdash; i.e. not just an average dragged around by a few big outlier moves, but a rate that's
+    statistically likely to be a real lean rather than chance. That still isn't a guarantee: the
     hour-of-day half pools many hourly ticks from the same handful of items over a short local-collection window, so
     those samples aren't fully independent, and "better than a coin flip at 95% confidence" is not "certain" either
     way. The day-of-week half is backfilled from poe.ninja's own daily-close history per item (one genuinely

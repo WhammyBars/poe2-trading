@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { CATEGORIES } from "./categories.js";
 import { getItemsForCategory, getTrailingHistory, closeDb } from "./db.js";
 import { computeSignal } from "./signal.js";
-import { computeSeasonality, bestDipDay, bestDipHour } from "./seasonality.js";
+import { computeSeasonality, bestDipDay, bestDipHour, bestPumpDay, bestPumpHour } from "./seasonality.js";
 import { fetchIndexState, pickCurrentLeague } from "./api.js";
 import { buildDashboard, buildGateShell } from "./dashboardHtml.js";
 import { loadPurchases, aggregateHoldings } from "./purchases.js";
@@ -75,34 +75,58 @@ function buildReportRows() {
 
 // Per-category (not pooled-across-everything) calendar pattern, so "buy this
 // on Wednesdays" is actually about the category the item lives in rather than
-// a blend of all twelve. Cheap to compute — same query the global chart uses,
+// a blend of all twelve — pooling everything washes out into a single
+// economy-wide drift (every category's prices trending up together over the
+// league dominates the average), hiding the cyclical day/hour effect within
+// any one category. Cheap to compute — same query the global chart uses,
 // just scoped to one category's item keys at a time.
 function buildCategoryTiming() {
   const timing = new Map();
   for (const cat of CATEGORIES) {
     const s = computeSeasonality([cat.key]);
     timing.set(cat.label, {
-      day: bestDipDay(s.dayOfWeek, s.dayStatus),
-      hour: bestDipHour(s.hourOfDay, s.hourStatus),
+      dipDay: bestDipDay(s.dayOfWeek, s.dayStatus),
+      dipHour: bestDipHour(s.hourOfDay, s.hourStatus),
+      pumpDay: bestPumpDay(s.dayOfWeek, s.dayStatus),
+      pumpHour: bestPumpHour(s.hourOfDay, s.hourStatus),
     });
   }
   return timing;
 }
 
-// bestDipDay/bestDipHour already gate on a 95%-confidence win rate above
-// 50% (see seasonality.js), so anything reaching here is more than just an
-// average dragged down by a few outliers — but "reliable" still only means
-// "better than a coin flip at 95% confidence", not "certain".
+// bestDipDay/bestDipHour/bestPumpDay/bestPumpHour already gate on a
+// 95%-confidence rate above 50% (see seasonality.js), so anything reaching
+// here is more than just an average dragged around by a few outliers — but
+// "reliable" still only means "better than a coin flip at 95% confidence",
+// not "certain".
 function describeBucket(b) {
-  return `${b.label} (win rate ${(b.winRate * 100).toFixed(0)}% of ${b.n} ticks, 95% floor ${(b.winRateLowerBound * 100).toFixed(0)}%${b.preliminary ? ", preliminary" : ""})`;
+  return `${b.label} (${(b.rate * 100).toFixed(0)}% of ${b.n} ticks, 95% floor ${(b.rateLowerBound * 100).toFixed(0)}%${b.preliminary ? ", preliminary" : ""})`;
+}
+
+function dayHourParts(day, hour) {
+  const parts = [];
+  if (day) parts.push(describeBucket(day));
+  if (hour) parts.push(`around ${describeBucket(hour)}`);
+  return parts;
 }
 
 function timingHintText(hint) {
-  if (!hint || (!hint.day && !hint.hour)) return null;
-  const parts = [];
-  if (hint.day) parts.push(describeBucket(hint.day));
-  if (hint.hour) parts.push(`around ${describeBucket(hint.hour)}`);
-  return `This category has a statistically reliable dip on ${parts.join(" and ")}.`;
+  if (!hint) return null;
+  const buyParts = dayHourParts(hint.dipDay, hint.dipHour);
+  const sellParts = dayHourParts(hint.pumpDay, hint.pumpHour);
+  if (!buyParts.length && !sellParts.length) return null;
+  const segments = [];
+  if (buyParts.length) segments.push(`tends to dip (buy well) on ${buyParts.join(" and ")}`);
+  if (sellParts.length) segments.push(`tends to pump (sell well) on ${sellParts.join(" and ")}`);
+  return `This category statistically ${segments.join("; ")}.`;
+}
+
+// One row per tracked category regardless of current BUY/SELL signal state —
+// unlike the Buy-card timing hint (only attached to cards that already have
+// a live BUY verdict), this answers "what's the calendar pattern for this
+// whole category" even when nothing in it happens to be flagged right now.
+function buildCategoryPlaybook(categoryTiming) {
+  return CATEGORIES.map((cat) => ({ category: cat.label, ...categoryTiming.get(cat.label) }));
 }
 
 function pickTopOpportunities(rows) {
@@ -199,6 +223,7 @@ export async function runReport() {
   const league = pickCurrentLeague(indexState);
   const seasonality = computeSeasonality(CATEGORIES.map((c) => c.key));
   const categoryTiming = buildCategoryTiming();
+  const categoryPlaybook = buildCategoryPlaybook(categoryTiming);
   const { buyCards, sellCards } = pickTopOpportunities(rows);
   for (const card of buyCards) {
     card.timingHint = timingHintText(categoryTiming.get(card.category));
@@ -214,6 +239,7 @@ export async function runReport() {
     trailingHours: TRAILING_HOURS,
     rows,
     seasonality,
+    categoryPlaybook,
     buyCards,
     sellCards,
     holdings,

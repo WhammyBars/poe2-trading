@@ -34,9 +34,14 @@ function sgtDate(ts) {
 }
 
 function makeBuckets(n) {
-  return Array.from({ length: n }, () => ({ sum: 0, n: 0, downTicks: 0 }));
+  return Array.from({ length: n }, () => ({ sum: 0, n: 0, downTicks: 0, upTicks: 0 }));
 }
 
+// Down-tick stats power "reliable dip" (buy timing); up-tick stats power
+// "reliable pump" (sell timing) — see bestDip/bestPump below. Kept as two
+// separate win rates rather than treating "not a dip" as "a pump", since a
+// tick can also be flat (pct === 0), and because a bucket with a middling,
+// unreliable dip rate shouldn't be reported as a reliable pump by default.
 function finalizeBuckets(buckets, labelFor) {
   return buckets.map((b, i) => ({
     ...labelFor(i),
@@ -44,6 +49,8 @@ function finalizeBuckets(buckets, labelFor) {
     n: b.n,
     winRate: b.n ? b.downTicks / b.n : null,
     winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
+    pumpRate: b.n ? b.upTicks / b.n : null,
+    pumpRateLowerBound: wilsonLowerBound(b.upTicks, b.n),
   }));
 }
 
@@ -68,6 +75,7 @@ function computeHourOfDay(categoryKeys) {
         hourBuckets[hour].sum += pct;
         hourBuckets[hour].n += 1;
         if (pct < 0) hourBuckets[hour].downTicks += 1;
+        else if (pct > 0) hourBuckets[hour].upTicks += 1;
       }
       prevVal = r.primaryValue;
     }
@@ -100,6 +108,7 @@ function computeDayOfWeek(categoryKeys) {
         dayBuckets[dow].sum += pct;
         dayBuckets[dow].n += 1;
         if (pct < 0) dayBuckets[dow].downTicks += 1;
+        else if (pct > 0) dayBuckets[dow].upTicks += 1;
       }
       prevVal = r.primaryValue;
     }
@@ -144,32 +153,42 @@ function wilsonLowerBound(wins, n) {
   return (center - margin) / denom;
 }
 
-// A bucket only counts as a reliable dip window if, at 95% confidence, its
-// true down-tick rate is still above 50% — i.e. better than a coin flip,
-// not just an average dragged down by a couple of big outlier drops.
-const RELIABLE_WIN_RATE_FLOOR = 0.5;
+// A bucket only counts as reliable — dip (buy) or pump (sell) — if, at 95%
+// confidence, its true rate is still above 50%: better than a coin flip,
+// not just an average dragged around by a couple of outlier moves.
+const RELIABLE_RATE_FLOOR = 0.5;
 
-function bestDip(buckets, status, labelKey) {
+function bestByRate(buckets, status, labelKey, rateKey, boundKey) {
   if (status === "insufficient") return null;
-  const candidates = buckets.filter((b) => b.winRateLowerBound != null && b.winRateLowerBound > RELIABLE_WIN_RATE_FLOOR);
+  const candidates = buckets.filter((b) => b[boundKey] != null && b[boundKey] > RELIABLE_RATE_FLOOR);
   if (!candidates.length) return null;
-  const best = candidates.reduce((a, b) => (b.winRateLowerBound > a.winRateLowerBound ? b : a));
+  const best = candidates.reduce((a, b) => (b[boundKey] > a[boundKey] ? b : a));
   return {
     label: labelKey(best),
     avgPct: best.avgPct,
     n: best.n,
-    winRate: best.winRate,
-    winRateLowerBound: best.winRateLowerBound,
+    rate: best[rateKey],
+    rateLowerBound: best[boundKey],
     preliminary: status === "preliminary",
   };
 }
 
 const DAY_FULL_BY_ABBR = Object.fromEntries(DAY_NAMES.map((abbr, i) => [abbr, DAY_NAMES_FULL[i]]));
+const dayLabel = (b) => `${DAY_FULL_BY_ABBR[b.day]}s`;
+const hourLabel = (b) => `${String(b.hour).padStart(2, "0")}:00 SGT`;
 
 export function bestDipDay(dayOfWeek, dayStatus) {
-  return bestDip(dayOfWeek, dayStatus, (b) => `${DAY_FULL_BY_ABBR[b.day]}s`);
+  return bestByRate(dayOfWeek, dayStatus, dayLabel, "winRate", "winRateLowerBound");
 }
 
 export function bestDipHour(hourOfDay, hourStatus) {
-  return bestDip(hourOfDay, hourStatus, (b) => `${String(b.hour).padStart(2, "0")}:00 SGT`);
+  return bestByRate(hourOfDay, hourStatus, hourLabel, "winRate", "winRateLowerBound");
+}
+
+export function bestPumpDay(dayOfWeek, dayStatus) {
+  return bestByRate(dayOfWeek, dayStatus, dayLabel, "pumpRate", "pumpRateLowerBound");
+}
+
+export function bestPumpHour(hourOfDay, hourStatus) {
+  return bestByRate(hourOfDay, hourStatus, hourLabel, "pumpRate", "pumpRateLowerBound");
 }
