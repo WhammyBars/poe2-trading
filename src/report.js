@@ -89,12 +89,20 @@ function buildCategoryTiming() {
   return timing;
 }
 
+// bestDipDay/bestDipHour already gate on a 95%-confidence win rate above
+// 50% (see seasonality.js), so anything reaching here is more than just an
+// average dragged down by a few outliers — but "reliable" still only means
+// "better than a coin flip at 95% confidence", not "certain".
+function describeBucket(b) {
+  return `${b.label} (win rate ${(b.winRate * 100).toFixed(0)}% of ${b.n} ticks, 95% floor ${(b.winRateLowerBound * 100).toFixed(0)}%${b.preliminary ? ", preliminary" : ""})`;
+}
+
 function timingHintText(hint) {
   if (!hint || (!hint.day && !hint.hour)) return null;
   const parts = [];
-  if (hint.day) parts.push(`${hint.day.label}s (avg ${hint.day.avgPct.toFixed(1)}%, n=${hint.day.n}${hint.day.preliminary ? ", preliminary" : ""})`);
-  if (hint.hour) parts.push(`around ${hint.hour.label} (avg ${hint.hour.avgPct.toFixed(1)}%, n=${hint.hour.n}${hint.hour.preliminary ? ", preliminary" : ""})`);
-  return `This category has historically dipped ${parts.join(" and ")}.`;
+  if (hint.day) parts.push(describeBucket(hint.day));
+  if (hint.hour) parts.push(`around ${describeBucket(hint.hour)}`);
+  return `This category has a statistically reliable dip on ${parts.join(" and ")}.`;
 }
 
 function pickTopOpportunities(rows) {

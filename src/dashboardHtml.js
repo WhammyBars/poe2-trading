@@ -123,6 +123,9 @@ function statTile(label, value, sub) {
   </div>`;
 }
 
+// A bucket is only "reliable" (solid green ring in the chart) if its 95%
+// Wilson lower bound on the down-tick rate clears 50% — see seasonality.js.
+// Everything else is still shown (informational), just not badged as trustworthy.
 function barChart(buckets, labelFn, status) {
   const maxAbs = Math.max(1e-9, ...buckets.map((b) => Math.abs(b.avgPct)));
   const rows = buckets
@@ -130,10 +133,13 @@ function barChart(buckets, labelFn, status) {
       const widthPct = (Math.abs(b.avgPct) / maxAbs) * 100;
       const isNeg = b.avgPct < 0;
       const color = isNeg ? "var(--diverging-neg)" : "var(--diverging-pos)";
-      return `<div class="bar-row">
-        <div class="bar-label">${escapeHtml(labelFn(b))}</div>
+      const reliable = b.winRateLowerBound != null && b.winRateLowerBound > 0.5;
+      const winRatePct = b.winRate != null ? `${(b.winRate * 100).toFixed(0)}%` : "n/a";
+      const title = `${b.avgPct.toFixed(2)}% avg, n=${b.n}, down-tick rate ${winRatePct} (95% floor ${b.winRateLowerBound != null ? (b.winRateLowerBound * 100).toFixed(0) + "%" : "n/a"})`;
+      return `<div class="bar-row${reliable ? " bar-reliable" : ""}">
+        <div class="bar-label">${escapeHtml(labelFn(b))}${reliable ? ' <span class="reliable-dot" title="Statistically reliable: 95% confidence the down-tick rate is above 50%">&#9679;</span>' : ""}</div>
         <div class="bar-track">
-          <div class="bar-fill" style="width:${widthPct.toFixed(1)}%; background:${color};" title="${b.avgPct.toFixed(2)}% avg, n=${b.n}"></div>
+          <div class="bar-fill" style="width:${widthPct.toFixed(1)}%; background:${color};" title="${title}"></div>
         </div>
         <div class="bar-value">${b.n > 0 ? `${b.avgPct >= 0 ? "+" : ""}${b.avgPct.toFixed(1)}%` : "&mdash;"}</div>
       </div>`;
@@ -172,7 +178,7 @@ function seasonalitySection(seasonality) {
 
   return `<section class="section">
     <h2>Calendar patterns</h2>
-    <p class="section-note">Average hour-over-hour % price change, bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). The same calculation run per-category (more specific, but needs more history to unlock) drives the "historically dips&hellip;" note on the Buy cards above.</p>
+    <p class="section-note">Average hour-over-hour % price change, bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). A <span class="reliable-dot">&#9679;</span> next to a label means that bucket clears a 95%-confidence bar for its down-tick rate being above 50% (hover the bar for the exact numbers) &mdash; without the dot, the dip is still just an average that could be a few outliers, not a real edge. The same calculation run per-category drives the "historically dips&hellip;" note on the Buy cards above, and only fires when a bucket earns that dot.</p>
     <div class="two-col">
       <div>
         <h3>By hour of day (Singapore time)</h3>
@@ -406,6 +412,7 @@ export function buildDashboard({
   .bar-chart { display: flex; flex-direction: column; gap: 0.35rem; }
   .bar-row { display: grid; grid-template-columns: 3.2rem 1fr 3.4rem; align-items: center; gap: 0.5rem; font-size: 0.76rem; }
   .bar-label { color: var(--text-secondary); text-align: right; }
+  .reliable-dot { color: var(--status-good); font-size: 0.6rem; cursor: help; }
   .bar-track { background: var(--gridline); border-radius: 3px; height: 10px; overflow: hidden; }
   .bar-fill { height: 100%; border-radius: 3px; }
   .bar-value { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
@@ -503,8 +510,12 @@ ${tableRows(rows)}
     Target prices (buy &le; / sell &ge;) are the trailing mean &plusmn; the same z-score threshold used for the verdict &mdash;
     i.e. the price at which this tool's own signal would flip, rounded to a whole divine orb (floored for buy, ceiled for
     sell) since that's the smallest unit you can actually list at. The "historically dips&hellip;" timing note is that
-    item's category, not the item itself (too few per-item samples yet), and only appears once a bucket has 3+ independent
-    readings. See README.md and src/signal.js / src/seasonality.js for the exact rules. This tool reads public data only and
+    item's category, not the item itself (too few per-item samples yet), and only fires when a bucket's down-tick rate
+    clears a 95% Wilson-score confidence floor above 50% &mdash; i.e. not just an average dragged down by a few big drops,
+    but a rate that's statistically likely to be a real lean rather than chance. That still isn't a guarantee: buckets
+    pool many hourly ticks from the same handful of items across a short history, so samples aren't fully independent,
+    and "better than a coin flip at 95% confidence" is not "certain." Treat it as a lean worth weighing, not a promise.
+    See README.md and src/signal.js / src/seasonality.js for the exact rules. This tool reads public data only and
     takes no in-game action.
   </div>
 </div>

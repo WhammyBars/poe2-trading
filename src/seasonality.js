@@ -7,6 +7,7 @@
 import { getAllHistoryForCategory } from "./db.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_NAMES_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 // Timestamps are stored in UTC, but the buckets are for a Singapore-based
 // user — Singapore is a fixed UTC+8 with no DST, so a flat offset is exact
@@ -20,8 +21,8 @@ const DAY_PRELIMINARY_DAYS = 7;
 const DAY_SOLID_DAYS = 21;
 
 export function computeSeasonality(categoryKeys) {
-  const hourBuckets = Array.from({ length: 24 }, () => ({ sum: 0, n: 0 }));
-  const dayBuckets = Array.from({ length: 7 }, () => ({ sum: 0, n: 0 }));
+  const hourBuckets = Array.from({ length: 24 }, () => ({ sum: 0, n: 0, downTicks: 0 }));
+  const dayBuckets = Array.from({ length: 7 }, () => ({ sum: 0, n: 0, downTicks: 0 }));
   const distinctDays = new Set();
   let minTs = null;
   let maxTs = null;
@@ -47,8 +48,10 @@ export function computeSeasonality(categoryKeys) {
         const dow = (d.getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
         hourBuckets[hour].sum += pct;
         hourBuckets[hour].n += 1;
+        if (pct < 0) hourBuckets[hour].downTicks += 1;
         dayBuckets[dow].sum += pct;
         dayBuckets[dow].n += 1;
+        if (pct < 0) dayBuckets[dow].downTicks += 1;
       }
       prevVal = r.primaryValue;
     }
@@ -56,8 +59,20 @@ export function computeSeasonality(categoryKeys) {
 
   const daysSpanned = distinctDays.size;
 
-  const hourOfDay = hourBuckets.map((b, hour) => ({ hour, avgPct: b.n ? b.sum / b.n : 0, n: b.n }));
-  const dayOfWeek = dayBuckets.map((b, i) => ({ day: DAY_NAMES[i], avgPct: b.n ? b.sum / b.n : 0, n: b.n }));
+  const hourOfDay = hourBuckets.map((b, hour) => ({
+    hour,
+    avgPct: b.n ? b.sum / b.n : 0,
+    n: b.n,
+    winRate: b.n ? b.downTicks / b.n : null,
+    winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
+  }));
+  const dayOfWeek = dayBuckets.map((b, i) => ({
+    day: DAY_NAMES[i],
+    avgPct: b.n ? b.sum / b.n : 0,
+    n: b.n,
+    winRate: b.n ? b.downTicks / b.n : null,
+    winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
+  }));
 
   return {
     hourOfDay,
@@ -71,21 +86,48 @@ export function computeSeasonality(categoryKeys) {
   };
 }
 
-// Minimum independent samples in a single bucket before we'll name it as a
-// specific "buy on this day/hour" recommendation — a couple of stray points
-// can look like a dip window by pure chance.
-const MIN_BUCKET_SAMPLES = 3;
+// 95% Wilson score lower bound on a proportion (wins/n) — the standard
+// small-sample-safe way to ask "is this win rate actually above chance, or
+// could a coin flip explain it?". Unlike a raw win rate, it automatically
+// demands more samples before trusting a bucket: 3/3 "wins" barely clears
+// ~44%, nowhere near enough to call reliable, while 40/60 (67%) comfortably
+// clears 50% because the sample size backs it up.
+const Z_95 = 1.96;
 
-function bestDip(buckets, status, labelKey, minN = MIN_BUCKET_SAMPLES) {
-  if (status === "insufficient") return null;
-  const candidates = buckets.filter((b) => b.n >= minN && b.avgPct < 0);
-  if (!candidates.length) return null;
-  const best = candidates.reduce((a, b) => (b.avgPct < a.avgPct ? b : a));
-  return { label: labelKey(best), avgPct: best.avgPct, n: best.n, preliminary: status === "preliminary" };
+function wilsonLowerBound(wins, n) {
+  if (n === 0) return null;
+  const phat = wins / n;
+  const z2 = Z_95 * Z_95;
+  const denom = 1 + z2 / n;
+  const center = phat + z2 / (2 * n);
+  const margin = Z_95 * Math.sqrt((phat * (1 - phat) + z2 / (4 * n)) / n);
+  return (center - margin) / denom;
 }
 
+// A bucket only counts as a reliable dip window if, at 95% confidence, its
+// true down-tick rate is still above 50% — i.e. better than a coin flip,
+// not just an average dragged down by a couple of big outlier drops.
+const RELIABLE_WIN_RATE_FLOOR = 0.5;
+
+function bestDip(buckets, status, labelKey) {
+  if (status === "insufficient") return null;
+  const candidates = buckets.filter((b) => b.winRateLowerBound != null && b.winRateLowerBound > RELIABLE_WIN_RATE_FLOOR);
+  if (!candidates.length) return null;
+  const best = candidates.reduce((a, b) => (b.winRateLowerBound > a.winRateLowerBound ? b : a));
+  return {
+    label: labelKey(best),
+    avgPct: best.avgPct,
+    n: best.n,
+    winRate: best.winRate,
+    winRateLowerBound: best.winRateLowerBound,
+    preliminary: status === "preliminary",
+  };
+}
+
+const DAY_FULL_BY_ABBR = Object.fromEntries(DAY_NAMES.map((abbr, i) => [abbr, DAY_NAMES_FULL[i]]));
+
 export function bestDipDay(dayOfWeek, dayStatus) {
-  return bestDip(dayOfWeek, dayStatus, (b) => b.day);
+  return bestDip(dayOfWeek, dayStatus, (b) => `${DAY_FULL_BY_ABBR[b.day]}s`);
 }
 
 export function bestDipHour(hourOfDay, hourStatus) {
