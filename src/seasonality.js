@@ -1,10 +1,19 @@
-// Looks for hour-of-day / day-of-week price patterns in our own local history
-// (poe.ninja's sparkline only covers ~7 recent points, not enough for this).
+// Looks for hour-of-day / day-of-week price patterns.
+// Hour-of-day comes from our own locally-collected hourly history (poe.ninja's
+// sparkline only covers ~7 recent points, not enough for this, and poe.ninja's
+// own per-item history endpoint is daily-only so it can't give hour granularity).
+// Day-of-week comes from a separate backfilled daily-close table (see
+// backfillDailyHistory.js) sourced from poe.ninja's per-item details endpoint,
+// which goes back to league start — far more calendar coverage, immediately,
+// than waiting weeks for the hourly watch loop to accumulate it. The two are
+// deliberately never mixed into the same day-over-day delta: they're
+// different price snapshots (live vs. daily close) for the same item, and a
+// transition between them would show up as a phantom jump.
 // Deliberately conservative about claiming a pattern is real: below the
 // coverage thresholds this returns an "insufficient data" state instead of a
 // misleading chart, since a handful of samples can look like a pattern by
 // pure chance.
-import { getAllHistoryForCategory } from "./db.js";
+import { getAllHistoryForCategory, getAllDailyHistoryForCategory } from "./db.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_NAMES_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -20,12 +29,27 @@ const HOUR_SOLID_DAYS = 7;
 const DAY_PRELIMINARY_DAYS = 7;
 const DAY_SOLID_DAYS = 21;
 
-export function computeSeasonality(categoryKeys) {
-  const hourBuckets = Array.from({ length: 24 }, () => ({ sum: 0, n: 0, downTicks: 0 }));
-  const dayBuckets = Array.from({ length: 7 }, () => ({ sum: 0, n: 0, downTicks: 0 }));
+function sgtDate(ts) {
+  return new Date(new Date(ts).getTime() + SGT_OFFSET_MS);
+}
+
+function makeBuckets(n) {
+  return Array.from({ length: n }, () => ({ sum: 0, n: 0, downTicks: 0 }));
+}
+
+function finalizeBuckets(buckets, labelFor) {
+  return buckets.map((b, i) => ({
+    ...labelFor(i),
+    avgPct: b.n ? b.sum / b.n : 0,
+    n: b.n,
+    winRate: b.n ? b.downTicks / b.n : null,
+    winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
+  }));
+}
+
+function computeHourOfDay(categoryKeys) {
+  const hourBuckets = makeBuckets(24);
   const distinctDays = new Set();
-  let minTs = null;
-  let maxTs = null;
 
   for (const cat of categoryKeys) {
     const rows = getAllHistoryForCategory(cat);
@@ -36,19 +60,43 @@ export function computeSeasonality(categoryKeys) {
         prevKey = r.itemKey;
         prevVal = null;
       }
-      const dayStr = new Date(new Date(r.ts).getTime() + SGT_OFFSET_MS).toISOString().slice(0, 10);
-      distinctDays.add(dayStr);
-      if (!minTs || r.ts < minTs) minTs = r.ts;
-      if (!maxTs || r.ts > maxTs) maxTs = r.ts;
+      distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
 
       if (prevVal != null && prevVal !== 0) {
         const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
-        const d = new Date(new Date(r.ts).getTime() + SGT_OFFSET_MS);
-        const hour = d.getUTCHours();
-        const dow = (d.getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
+        const hour = sgtDate(r.ts).getUTCHours();
         hourBuckets[hour].sum += pct;
         hourBuckets[hour].n += 1;
         if (pct < 0) hourBuckets[hour].downTicks += 1;
+      }
+      prevVal = r.primaryValue;
+    }
+  }
+
+  return {
+    hourOfDay: finalizeBuckets(hourBuckets, (hour) => ({ hour })),
+    daysSpanned: distinctDays.size,
+  };
+}
+
+function computeDayOfWeek(categoryKeys) {
+  const dayBuckets = makeBuckets(7);
+  const distinctDays = new Set();
+
+  for (const cat of categoryKeys) {
+    const rows = getAllDailyHistoryForCategory(cat);
+    let prevKey = null;
+    let prevVal = null;
+    for (const r of rows) {
+      if (r.itemKey !== prevKey) {
+        prevKey = r.itemKey;
+        prevVal = null;
+      }
+      distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
+
+      if (prevVal != null && prevVal !== 0) {
+        const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
+        const dow = (sgtDate(r.ts).getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
         dayBuckets[dow].sum += pct;
         dayBuckets[dow].n += 1;
         if (pct < 0) dayBuckets[dow].downTicks += 1;
@@ -57,31 +105,23 @@ export function computeSeasonality(categoryKeys) {
     }
   }
 
-  const daysSpanned = distinctDays.size;
+  return {
+    dayOfWeek: finalizeBuckets(dayBuckets, (i) => ({ day: DAY_NAMES[i] })),
+    daysSpanned: distinctDays.size,
+  };
+}
 
-  const hourOfDay = hourBuckets.map((b, hour) => ({
-    hour,
-    avgPct: b.n ? b.sum / b.n : 0,
-    n: b.n,
-    winRate: b.n ? b.downTicks / b.n : null,
-    winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
-  }));
-  const dayOfWeek = dayBuckets.map((b, i) => ({
-    day: DAY_NAMES[i],
-    avgPct: b.n ? b.sum / b.n : 0,
-    n: b.n,
-    winRate: b.n ? b.downTicks / b.n : null,
-    winRateLowerBound: wilsonLowerBound(b.downTicks, b.n),
-  }));
+export function computeSeasonality(categoryKeys) {
+  const { hourOfDay, daysSpanned: hourDaysSpanned } = computeHourOfDay(categoryKeys);
+  const { dayOfWeek, daysSpanned: dayDaysSpanned } = computeDayOfWeek(categoryKeys);
 
   return {
     hourOfDay,
     dayOfWeek,
-    daysSpanned,
-    minTs,
-    maxTs,
-    hourStatus: daysSpanned >= HOUR_SOLID_DAYS ? "solid" : daysSpanned >= HOUR_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
-    dayStatus: daysSpanned >= DAY_SOLID_DAYS ? "solid" : daysSpanned >= DAY_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
+    hourDaysSpanned,
+    dayDaysSpanned,
+    hourStatus: hourDaysSpanned >= HOUR_SOLID_DAYS ? "solid" : hourDaysSpanned >= HOUR_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
+    dayStatus: dayDaysSpanned >= DAY_SOLID_DAYS ? "solid" : dayDaysSpanned >= DAY_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
     thresholds: { HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS },
   };
 }

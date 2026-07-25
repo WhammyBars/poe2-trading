@@ -1,4 +1,4 @@
-import { BASE_URL, EXCHANGE_PATH, STASH_PATH, INDEX_STATE_PATH } from "./categories.js";
+import { BASE_URL, EXCHANGE_PATH, STASH_PATH, INDEX_STATE_PATH, DETAILS_PATH } from "./categories.js";
 
 const USER_AGENT = "poe2-arbitrage-tool/1.0 (informational price tracker; not for trade automation)";
 
@@ -66,5 +66,32 @@ function normalizeOverview(data) {
     primaryCurrency: data.core?.primary ?? null,
     secondaryCurrency: data.core?.secondary ?? null,
     lines,
+  };
+}
+
+// The 3 benchmark currencies are the only items whose overview `id` doesn't
+// already match the details endpoint's id slug (every other item's overview
+// id is already the slug, confirmed against several categories). poe.ninja
+// exposes the real id->slug mapping via the overview response's top-level
+// `core.items`, but since these three are permanent, well-known PoE
+// currencies, hardcoding is simpler than plumbing that array through the
+// normalized overview shape just for three known cases.
+const DETAILS_ID_OVERRIDES = { divine: "divine-orb", exalted: "exalted-orb", chaos: "chaos-orb" };
+
+// Per-item daily price history against every currency it trades against —
+// what poe.ninja's own item detail pages call. Far longer range than the
+// 7-point sparkline on the overview endpoint (goes back to league start),
+// but daily granularity only, and one request per item rather than one per
+// category — see backfillDailyHistory.js for how this gets used.
+export async function fetchDetails({ type, itemId, leagueDisplayName }) {
+  const detailsId = DETAILS_ID_OVERRIDES[itemId] ?? itemId;
+  const url = `${BASE_URL}${DETAILS_PATH}?league=${encodeURIComponent(leagueDisplayName)}&type=${encodeURIComponent(type)}&id=${encodeURIComponent(detailsId)}`;
+  const data = await getJson(url);
+  return {
+    itemId: data.item?.id ?? itemId,
+    pairs: (data.pairs ?? []).map((p) => ({
+      id: p.id,
+      history: (p.history ?? []).map((h) => ({ ts: h.timestamp, rate: h.rate })),
+    })),
   };
 }

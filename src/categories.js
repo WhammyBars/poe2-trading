@@ -33,3 +33,7 @@ export const BASE_URL = "https://poe.ninja";
 export const EXCHANGE_PATH = "/poe2/api/economy/exchange/current/overview";
 export const STASH_PATH = "/poe2/api/economy/stash/current/item/overview";
 export const INDEX_STATE_PATH = "/poe2/api/data/index-state";
+// Per-item daily price history (what poe.ninja's own item detail pages use)
+// — see backfillDailyHistory.js. Only confirmed for the exchange endpoint
+// family, which is the only one any tracked category currently uses.
+export const DETAILS_PATH = "/poe2/api/economy/exchange/current/details";

@@ -156,29 +156,29 @@ function emptyState(title, body) {
 }
 
 function seasonalitySection(seasonality) {
-  const { hourOfDay, dayOfWeek, daysSpanned, hourStatus, dayStatus, thresholds } = seasonality;
+  const { hourOfDay, dayOfWeek, hourDaysSpanned, dayDaysSpanned, hourStatus, dayStatus, thresholds } = seasonality;
 
   const hourBlock =
     hourStatus === "insufficient"
       ? emptyState(
           "Not enough history yet for an hour-of-day pattern",
-          `Covering ${daysSpanned} day(s) so far; need at least ${thresholds.HOUR_PRELIMINARY_DAYS} for a first (preliminary) read, ${thresholds.HOUR_SOLID_DAYS}+ for a solid one. This fills in automatically as the watch loop keeps running.`
+          `Covering ${hourDaysSpanned} day(s) of our own hourly collection so far; need at least ${thresholds.HOUR_PRELIMINARY_DAYS} for a first (preliminary) read, ${thresholds.HOUR_SOLID_DAYS}+ for a solid one. This fills in automatically as the watch loop keeps running (poe.ninja's own history endpoint is daily-only, so it can't help with hour-of-day).`
         )
-      : `${hourStatus === "preliminary" ? `<div class="status-note">Preliminary — only ${daysSpanned} day(s) of coverage, treat as a first look, not a confirmed pattern.</div>` : ""}
+      : `${hourStatus === "preliminary" ? `<div class="status-note">Preliminary — only ${hourDaysSpanned} day(s) of coverage, treat as a first look, not a confirmed pattern.</div>` : ""}
          ${barChart(hourOfDay, (b) => `${String(b.hour).padStart(2, "0")}:00`, hourStatus)}`;
 
   const dayBlock =
     dayStatus === "insufficient"
       ? emptyState(
           "Not enough history yet for a day-of-week pattern",
-          `Covering ${daysSpanned} day(s) so far; need at least ${thresholds.DAY_PRELIMINARY_DAYS} for a first (preliminary) read, ${thresholds.DAY_SOLID_DAYS}+ for a solid one (so each weekday has a few independent samples). This fills in automatically as the watch loop keeps running.`
+          `Covering ${dayDaysSpanned} day(s) so far; need at least ${thresholds.DAY_PRELIMINARY_DAYS} for a first (preliminary) read, ${thresholds.DAY_SOLID_DAYS}+ for a solid one. Run the daily-history backfill (see backfillDailyHistory.js) to pull this in from poe.ninja's own per-item history instead of waiting on it.`
         )
-      : `${dayStatus === "preliminary" ? `<div class="status-note">Preliminary — only ${daysSpanned} day(s) of coverage, treat as a first look, not a confirmed pattern.</div>` : ""}
+      : `${dayStatus === "preliminary" ? `<div class="status-note">Preliminary — only ${dayDaysSpanned} day(s) of coverage, treat as a first look, not a confirmed pattern.</div>` : ""}
          ${barChart(dayOfWeek, (b) => b.day, dayStatus)}`;
 
   return `<section class="section">
     <h2>Calendar patterns</h2>
-    <p class="section-note">Average hour-over-hour % price change, bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). A <span class="reliable-dot">&#9679;</span> next to a label means that bucket clears a 95%-confidence bar for its down-tick rate being above 50% (hover the bar for the exact numbers) &mdash; without the dot, the dip is still just an average that could be a few outliers, not a real edge. The same calculation run per-category drives the "historically dips&hellip;" note on the Buy cards above, and only fires when a bucket earns that dot.</p>
+    <p class="section-note">Average % price change bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, pooled across every tracked category. Hour-of-day is hour-over-hour change from our own local collection; day-of-week is day-over-day change from poe.ninja's own daily-close history per item (goes back to league start, so this fills in fast). Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). A <span class="reliable-dot">&#9679;</span> next to a label means that bucket clears a 95%-confidence bar for its down-tick rate being above 50% (hover the bar for the exact numbers) &mdash; without the dot, the dip is still just an average that could be a few outliers, not a real edge. The same calculation run per-category drives the "historically dips&hellip;" note on the Buy cards above, and only fires when a bucket earns that dot.</p>
     <div class="two-col">
       <div>
         <h3>By hour of day (Singapore time)</h3>
@@ -291,7 +291,7 @@ export function buildDashboard({
 }) {
   const counts = { BUY: 0, HOLD: 0, SELL: 0 };
   for (const r of rows) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
-  const daysOfHistory = seasonality.daysSpanned;
+  const daysOfHistory = seasonality.hourDaysSpanned;
 
   return `<!doctype html>
 <html lang="en">
@@ -512,11 +512,14 @@ ${tableRows(rows)}
     sell) since that's the smallest unit you can actually list at. The "historically dips&hellip;" timing note is that
     item's category, not the item itself (too few per-item samples yet), and only fires when a bucket's down-tick rate
     clears a 95% Wilson-score confidence floor above 50% &mdash; i.e. not just an average dragged down by a few big drops,
-    but a rate that's statistically likely to be a real lean rather than chance. That still isn't a guarantee: buckets
-    pool many hourly ticks from the same handful of items across a short history, so samples aren't fully independent,
-    and "better than a coin flip at 95% confidence" is not "certain." Treat it as a lean worth weighing, not a promise.
-    See README.md and src/signal.js / src/seasonality.js for the exact rules. This tool reads public data only and
-    takes no in-game action.
+    but a rate that's statistically likely to be a real lean rather than chance. That still isn't a guarantee: the
+    hour-of-day half pools many hourly ticks from the same handful of items over a short local-collection window, so
+    those samples aren't fully independent, and "better than a coin flip at 95% confidence" is not "certain" either
+    way. The day-of-week half is backfilled from poe.ninja's own daily-close history per item (one genuinely
+    independent sample per item per day, back to league start), which is less correlated but still a short economic
+    history overall. Treat any of it as a lean worth weighing, not a promise. See README.md and src/signal.js /
+    src/seasonality.js / src/backfillDailyHistory.js for the exact rules. This tool reads public data only and takes
+    no in-game action.
   </div>
 </div>
 <script>

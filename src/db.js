@@ -35,6 +35,22 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_price_history_key_ts ON price_history (item_key, ts);
+
+  -- Backfilled from poe.ninja's per-item details endpoint (daily granularity,
+  -- goes back to league start) — see backfillDailyHistory.js. Kept separate
+  -- from price_history (hourly, live) rather than merged in, since the two
+  -- are different price snapshots for the same item and a day-over-day delta
+  -- computed across a live->daily-close boundary would show up as a phantom
+  -- jump. Used only for day-of-week seasonality, never hour-of-day.
+  CREATE TABLE IF NOT EXISTS daily_price_history (
+    item_key TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    primary_value REAL NOT NULL,
+    primary_currency TEXT,
+    PRIMARY KEY (item_key, ts)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_daily_price_history_key_ts ON daily_price_history (item_key, ts);
 `);
 
 // Migration for DBs created before the `volume` column existed.
@@ -93,7 +109,7 @@ export function getTrailingHistory(key, sinceTs) {
 }
 
 const latestPerCategoryStmt = db.prepare(`
-  SELECT i.item_key AS itemKey, i.name, i.base_type AS baseType, i.variant, i.category
+  SELECT i.item_key AS itemKey, i.item_id AS itemId, i.name, i.base_type AS baseType, i.variant, i.category
   FROM items i
   WHERE i.category = ?
 `);
@@ -139,6 +155,31 @@ const allHistoryForCategoryStmt = db.prepare(`
 // stale rows from categories that were later excluded (e.g. tablets) don't leak in.
 export function getAllHistoryForCategory(category) {
   return allHistoryForCategoryStmt.all(category);
+}
+
+const upsertDailyStmt = db.prepare(`
+  INSERT INTO daily_price_history (item_key, ts, primary_value, primary_currency)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT(item_key, ts) DO UPDATE SET primary_value = excluded.primary_value, primary_currency = excluded.primary_currency
+`);
+
+export function recordDailySample({ itemKey: key, ts, primaryValue, primaryCurrency }) {
+  upsertDailyStmt.run(key, ts, primaryValue, primaryCurrency);
+}
+
+const allDailyHistoryForCategoryStmt = db.prepare(`
+  SELECT dph.item_key AS itemKey, dph.ts, dph.primary_value AS primaryValue
+  FROM daily_price_history dph
+  JOIN items i ON i.item_key = dph.item_key
+  WHERE i.category = ?
+  ORDER BY dph.item_key ASC, dph.ts ASC
+`);
+
+// Backfilled daily closes for one currently-tracked category — see
+// daily_price_history's table comment for why this is separate from
+// getAllHistoryForCategory.
+export function getAllDailyHistoryForCategory(category) {
+  return allDailyHistoryForCategoryStmt.all(category);
 }
 
 export function closeDb() {

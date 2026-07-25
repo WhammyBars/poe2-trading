@@ -1,0 +1,43 @@
+name: Backfill daily price history
+
+# poe.ninja's per-item details endpoint only updates once a day (it's daily
+# closes, not live), so there's no value running this more often than that —
+# unlike hourly.yml, which pulls live data every hour. Safe to re-run: the
+# backfill script upserts on (item_key, ts).
+on:
+  schedule:
+    # :17 past 03:00 UTC — well clear of the hourly job's :05 slot.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backfill-daily-history
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Backfill daily price history
+        run: node --disable-warning=ExperimentalWarning src/backfillDailyHistory.js
+
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/prices.sqlite
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Daily history backfill: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          fi
