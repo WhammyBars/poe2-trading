@@ -16,6 +16,17 @@ function fmtWhole(n) {
   return Math.round(n).toLocaleString();
 }
 
+// Real listings only work in whole divine orbs, not the raw fractional
+// z-score math — so floor buy targets (never suggest paying more than the
+// signal implies) and ceil sell targets (never suggest asking for less),
+// floored at 1 divine either way.
+function tradeableTarget(value, currency, mode) {
+  if (value == null) return null;
+  if (currency !== "divine") return value;
+  const rounded = mode === "buy" ? Math.floor(value) : Math.ceil(value);
+  return Math.max(1, rounded);
+}
+
 function fmtSingaporeTime(isoString) {
   const formatted = new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
@@ -80,11 +91,13 @@ function verdictPill(verdict, provisional) {
 }
 
 function targetLine(r) {
-  if (r.buyTarget == null && r.sellTarget == null) return "";
+  const buy = tradeableTarget(r.buyTarget, r.currency, "buy");
+  const sell = tradeableTarget(r.sellTarget, r.currency, "sell");
+  if (buy == null && sell == null) return "";
   const cur = escapeHtml(r.currency ?? "");
   const parts = [];
-  if (r.buyTarget != null) parts.push(`buy &le; ${fmtNum(r.buyTarget)} ${cur}`);
-  if (r.sellTarget != null) parts.push(`sell &ge; ${fmtNum(r.sellTarget)} ${cur}`);
+  if (buy != null) parts.push(`buy &le; ${buy} ${cur}`);
+  if (sell != null) parts.push(`sell &ge; ${sell} ${cur}`);
   return `<div class="opp-target">${parts.join(" &middot; ")}</div>`;
 }
 
@@ -201,7 +214,7 @@ function holdingsSection(holdings) {
         <td class="num">${h.currentValue != null ? valueDisplay(h.currentValue, h.currency) : "n/a"}</td>
         <td class="num">${pctBadge(h.pctChange)}</td>
         <td>${h.verdict ? verdictPill(h.verdict, h.provisional) : `<span class="pill pill-neutral">n/a</span>`}</td>
-        <td class="num">${h.sellTarget != null ? fmtNum(h.sellTarget) + " " + escapeHtml(h.currency ?? "") : "n/a"}</td>
+        <td class="num">${(() => { const t = tradeableTarget(h.sellTarget, h.currency, "sell"); return t != null ? `${t} ${escapeHtml(h.currency ?? "")}` : "n/a"; })()}</td>
         <td class="reason">${h.reason ? escapeHtml(h.reason) : "Item no longer in tracked categories."}</td>
       </tr>`
     )
@@ -218,10 +231,12 @@ function holdingsSection(holdings) {
 }
 
 function targetCell(r) {
-  if (r.buyTarget == null && r.sellTarget == null) return "n/a";
+  const buy = tradeableTarget(r.buyTarget, r.currency, "buy");
+  const sell = tradeableTarget(r.sellTarget, r.currency, "sell");
+  if (buy == null && sell == null) return "n/a";
   const parts = [];
-  if (r.buyTarget != null) parts.push(`&le;${fmtNum(r.buyTarget)}`);
-  if (r.sellTarget != null) parts.push(`&ge;${fmtNum(r.sellTarget)}`);
+  if (buy != null) parts.push(`&le;${buy}`);
+  if (sell != null) parts.push(`&ge;${sell}`);
   return parts.join(" / ");
 }
 
@@ -455,7 +470,8 @@ ${tableRows(rows)}
     Signal logic: BUY/SELL requires either a z-score vs. this item's own trailing average (once 3+ local hourly samples exist)
     confirmed by sparkline momentum, or, before that, poe.ninja's own 7-point sparkline trend as a provisional read.
     Target prices (buy &le; / sell &ge;) are the trailing mean &plusmn; the same z-score threshold used for the verdict &mdash;
-    i.e. the exact price at which this tool's own signal would flip. The "historically dips&hellip;" timing note is that
+    i.e. the price at which this tool's own signal would flip, rounded to a whole divine orb (floored for buy, ceiled for
+    sell) since that's the smallest unit you can actually list at. The "historically dips&hellip;" timing note is that
     item's category, not the item itself (too few per-item samples yet), and only appears once a bucket has 3+ independent
     readings. See README.md and src/signal.js / src/seasonality.js for the exact rules. This tool reads public data only and
     takes no in-game action.
