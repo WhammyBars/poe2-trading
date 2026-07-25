@@ -193,10 +193,22 @@ function pctBadge(pct) {
   return `<span class="pill ${cls}">${sign}${pct.toFixed(1)}%</span>`;
 }
 
-function holdingsSection(holdings) {
+function netWorthLine(netWorth) {
+  if (!netWorth) return "";
+  const worth = `<b>${fmtNum(netWorth.totalDivine, 2)} divine</b>`;
+  if (netWorth.mirrorPrice == null) {
+    return `<p class="section-note">Net worth: ${worth}. (Mirror of Kalandra price unavailable this run, can't compare.)</p>`;
+  }
+  const pct = netWorth.pctOfMirror.toFixed(netWorth.pctOfMirror < 1 ? 3 : 1);
+  return `<p class="section-note">Net worth: ${worth} &mdash; that's <b>${pct}%</b> of one Mirror of Kalandra
+    (currently ${fmtNum(netWorth.mirrorPrice, 0)} divine). ${fmtNum(netWorth.divineToMirror, 2)} divine to go.</p>`;
+}
+
+function holdingsSection(holdings, netWorth) {
   if (!holdings || holdings.length === 0) {
     return `<section class="section">
       <h2>Your holdings</h2>
+      ${netWorthLine(netWorth)}
       <div class="empty-state">
         <div class="empty-title">No purchases logged yet</div>
         <div class="empty-body">Tell Claude what you bought (item, quantity, price paid) and it'll show up here with a personalized read against your actual cost basis.</div>
@@ -223,6 +235,7 @@ function holdingsSection(holdings) {
   return `<section class="section">
     <h2>Your holdings</h2>
     <p class="section-note">Cost basis is the weighted average of everything logged as purchased. This is your P/L laid next to the same market signal used everywhere else on this page &mdash; still informational only, the call is yours. "Sell target" is the price at which our own signal would flip to SELL.</p>
+    ${netWorthLine(netWorth)}
     <table>
       <thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Current</th><th class="num">P/L</th><th>Signal</th><th class="num">Sell target</th><th>Why</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
@@ -258,7 +271,18 @@ function tableRows(rows) {
     .join("\n");
 }
 
-export function buildDashboard({ league, generatedAt, trailingHours, rows, seasonality, buyCards, sellCards, holdings, minValueDivine }) {
+export function buildDashboard({
+  league,
+  generatedAt,
+  trailingHours,
+  rows,
+  seasonality,
+  buyCards,
+  sellCards,
+  holdings,
+  netWorth = { totalDivine: 0, mirrorPrice: null, pctOfMirror: null, divineToMirror: null },
+  minValueDivine,
+}) {
   const counts = { BUY: 0, HOLD: 0, SELL: 0 };
   for (const r of rows) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1;
   const daysOfHistory = seasonality.daysSpanned;
@@ -416,9 +440,16 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
     ${statTile("Hold", counts.HOLD ?? 0)}
     ${statTile("Sell signals", counts.SELL ?? 0)}
     ${statTile("History depth", `${daysOfHistory}d`, "grows automatically while watch runs")}
+    ${statTile(
+      "Net worth",
+      `${fmtNum(netWorth.totalDivine, 2)} divine`,
+      netWorth.mirrorPrice != null
+        ? `${netWorth.pctOfMirror.toFixed(netWorth.pctOfMirror < 1 ? 3 : 1)}% of a Mirror`
+        : "Mirror price unavailable"
+    )}
   </div>
 
-  ${holdingsSection(holdings)}
+  ${holdingsSection(holdings, netWorth)}
 
   <section class="section">
     <h2>Top opportunities</h2>

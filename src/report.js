@@ -135,6 +135,22 @@ function printConsoleReport(rows) {
   console.log("");
 }
 
+// poe.ninja's exchange item id for Mirror of Kalandra — the traditional PoE
+// "how rich are you really" yardstick.
+const MIRROR_ITEM_KEY = "Currency:mirror";
+
+function computeNetWorth(holdings, allRows) {
+  const totalDivine = holdings.reduce((sum, h) => sum + (h.currentValue != null ? h.currentValue * h.qty : 0), 0);
+  const mirrorRow = allRows.find((r) => r.itemKey === MIRROR_ITEM_KEY);
+  const mirrorPrice = mirrorRow?.value ?? null;
+  return {
+    totalDivine,
+    mirrorPrice,
+    pctOfMirror: mirrorPrice ? (totalDivine / mirrorPrice) * 100 : null,
+    divineToMirror: mirrorPrice != null ? Math.max(0, mirrorPrice - totalDivine) : null,
+  };
+}
+
 // Joins logged purchases (cost basis) against this run's fresh market rows,
 // so the "Your holdings" table shows real P/L next to the same signal used everywhere else.
 function buildHoldings(purchaseHoldings, rows) {
@@ -182,6 +198,7 @@ export async function runReport() {
 
   const purchases = await loadPurchases(password);
   const holdings = buildHoldings(aggregateHoldings(purchases), allRows);
+  const netWorth = computeNetWorth(holdings, allRows);
 
   const innerHtml = buildDashboard({
     league: league?.displayName ?? "unknown",
@@ -192,6 +209,7 @@ export async function runReport() {
     buyCards,
     sellCards,
     holdings,
+    netWorth,
     minValueDivine: MIN_VALUE_DIVINE,
   });
 
