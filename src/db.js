@@ -182,6 +182,32 @@ export function getAllDailyHistoryForCategory(category) {
   return allDailyHistoryForCategoryStmt.all(category);
 }
 
+const fullHistoryForItemStmt = db.prepare(`
+  SELECT item_key AS itemKey, ts, primary_value AS primaryValue
+  FROM price_history
+  WHERE item_key = ?
+  ORDER BY ts ASC
+`);
+
+// Every locally-collected hourly sample for one item (not windowed like
+// getTrailingHistory) — used for per-item hour-of-day seasonality.
+export function getFullHistoryForItem(itemKey) {
+  return fullHistoryForItemStmt.all(itemKey);
+}
+
+const dailyHistoryForItemStmt = db.prepare(`
+  SELECT item_key AS itemKey, ts, primary_value AS primaryValue
+  FROM daily_price_history
+  WHERE item_key = ?
+  ORDER BY ts ASC
+`);
+
+// Every backfilled daily close for one item — used for per-item day-of-week
+// seasonality (see daily_price_history's table comment).
+export function getDailyHistoryForItem(itemKey) {
+  return dailyHistoryForItemStmt.all(itemKey);
+}
+
 export function closeDb() {
   db.close();
 }

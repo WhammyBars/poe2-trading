@@ -101,6 +101,25 @@ function targetLine(r) {
   return `<div class="opp-target">${parts.join(" &middot; ")}</div>`;
 }
 
+// Compact "day (rate%, n) · hour (rate%, n)" text for one side (buy or
+// sell) of an item's own calendar timing — null day/hour just drop out.
+function windowText(day, hour) {
+  const parts = [];
+  if (day) parts.push(`${escapeHtml(day.label)} (${(day.rate * 100).toFixed(0)}%, n=${day.n})`);
+  if (hour) parts.push(`${escapeHtml(hour.label)} (${(hour.rate * 100).toFixed(0)}%, n=${hour.n})`);
+  return parts.length ? parts.join(" &middot; ") : null;
+}
+
+function itemTimingLine(r) {
+  const buy = windowText(r.buyDay, r.buyHour);
+  const sell = windowText(r.sellDay, r.sellHour);
+  if (!buy && !sell) return "";
+  const parts = [];
+  if (buy) parts.push(`This item: buy ${buy}`);
+  if (sell) parts.push(`sell ${sell}`);
+  return `<div class="opp-timing">${parts.join(" &middot; ")}</div>`;
+}
+
 function opportunityCard(r) {
   return `<div class="opp-card">
     <div class="opp-head">
@@ -111,7 +130,8 @@ function opportunityCard(r) {
     ${sparklineSvg(r.sparkData, r.verdict)}
     ${targetLine(r)}
     <div class="opp-reason">${escapeHtml(r.reason)}</div>
-    ${r.timingHint ? `<div class="opp-timing">${escapeHtml(r.timingHint)}</div>` : ""}
+    ${itemTimingLine(r)}
+    ${r.categoryTimingHint ? `<div class="opp-timing opp-timing-category">${escapeHtml(r.categoryTimingHint)}</div>` : ""}
   </div>`;
 }
 
@@ -294,6 +314,11 @@ function targetCell(r) {
   return parts.join(" / ");
 }
 
+function itemWindowCell(day, hour) {
+  const text = windowText(day, hour);
+  return text ? `<span class="reason">${text}</span>` : `<span class="pill pill-neutral">n/a</span>`;
+}
+
 function tableRows(rows) {
   return rows
     .map(
@@ -305,6 +330,8 @@ function tableRows(rows) {
         <td>${verdictPill(r.verdict, r.provisional)}</td>
         <td class="num">${r.z == null ? "n/a" : r.z.toFixed(2)}</td>
         <td class="num" title="Price level our own signal would flip BUY/SELL at (buy &le; / sell &ge;).">${targetCell(r)}</td>
+        <td title="This item's own reliable dip window (95% confidence down-tick rate above 50%). Much smaller sample than the category-level table above, so many items honestly show n/a.">${itemWindowCell(r.buyDay, r.buyHour)}</td>
+        <td title="This item's own reliable pump window (95% confidence up-tick rate above 50%).">${itemWindowCell(r.sellDay, r.sellHour)}</td>
         <td>${sparklineSvg(r.sparkData, r.verdict)}</td>
         <td class="reason">${escapeHtml(r.reason)}</td>
       </tr>`
@@ -424,6 +451,7 @@ export function buildDashboard({
   .opp-target { font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 0.35rem; }
   .opp-reason { color: var(--text-secondary); font-size: 0.78rem; margin-top: 0.35rem; }
   .opp-timing { color: var(--text-muted); font-size: 0.74rem; font-style: italic; margin-top: 0.3rem; }
+  .opp-timing-category { opacity: 0.75; }
 
   .pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
   .pill-good { background: var(--pill-good-bg); color: var(--status-good); }
@@ -516,7 +544,7 @@ export function buildDashboard({
 
   <section class="section">
     <h2>All tracked items</h2>
-    <p class="section-note">Limited to items worth at least ${minValueDivine} divine per unit (cheaper stuff only trades sensibly in bulk, not worth surfacing here). Sorted by volume by default &mdash; most actively traded first. Volume is total value traded in the primary currency (divine), not a trade count, so a cheap bulk currency and an expensive item can post similar numbers for very different real trade counts. Click any column header to re-sort.</p>
+    <p class="section-note">Limited to items worth at least ${minValueDivine} divine per unit (cheaper stuff only trades sensibly in bulk, not worth surfacing here). Sorted by volume by default &mdash; most actively traded first. Volume is total value traded in the primary currency (divine), not a trade count, so a cheap bulk currency and an expensive item can post similar numbers for very different real trade counts. "Item buy/sell window" is this specific item's own calendar pattern (not the whole category) &mdash; a much smaller sample than the category-level table above, so "n/a" here is the honest, common result, and even a hit is weaker evidence than the category numbers. Click any column header to re-sort.</p>
     <div class="filter-row" id="filters">
       <button class="filter-btn active" data-filter="ALL">All</button>
       <button class="filter-btn" data-filter="BUY">Buy</button>
@@ -533,6 +561,8 @@ export function buildDashboard({
           <th data-key="verdict">Signal</th>
           <th data-key="z" class="num">z</th>
           <th class="num">Target (buy/sell)</th>
+          <th>Item buy window</th>
+          <th>Item sell window</th>
           <th>Trend</th>
           <th>Why</th>
         </tr>

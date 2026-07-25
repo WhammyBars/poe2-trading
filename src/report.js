@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { CATEGORIES } from "./categories.js";
 import { getItemsForCategory, getTrailingHistory, closeDb } from "./db.js";
 import { computeSignal } from "./signal.js";
-import { computeSeasonality, bestDipDay, bestDipHour, bestPumpDay, bestPumpHour } from "./seasonality.js";
+import { computeSeasonality, computeItemSeasonality, bestDipDay, bestDipHour, bestPumpDay, bestPumpHour } from "./seasonality.js";
 import { fetchIndexState, pickCurrentLeague } from "./api.js";
 import { buildDashboard, buildGateShell } from "./dashboardHtml.js";
 import { loadPurchases, aggregateHoldings } from "./purchases.js";
@@ -129,6 +129,23 @@ function buildCategoryPlaybook(categoryTiming) {
   return CATEGORIES.map((cat) => ({ category: cat.label, ...categoryTiming.get(cat.label) }));
 }
 
+// Per-item calendar timing, mutating rows in place — cheap (local SQLite
+// reads only, no network), so run for every displayed row. Sample sizes here
+// are a single item's own history (its share of a category's daily closes,
+// its own local hourly ticks), much smaller than the pooled category
+// numbers above, so expect far more nulls, and treat any hit as weaker
+// evidence than the category-level equivalent even though both pass the
+// same 95%-confidence bar (see seasonality.js).
+function attachItemTiming(rows) {
+  for (const r of rows) {
+    const s = computeItemSeasonality(r.itemKey);
+    r.buyDay = bestDipDay(s.dayOfWeek, s.dayStatus);
+    r.buyHour = bestDipHour(s.hourOfDay, s.hourStatus);
+    r.sellDay = bestPumpDay(s.dayOfWeek, s.dayStatus);
+    r.sellHour = bestPumpHour(s.hourOfDay, s.hourStatus);
+  }
+}
+
 function pickTopOpportunities(rows) {
   const liquid = rows.filter((r) => (r.listingCount ?? r.volume ?? 0) >= MIN_LIQUID_VOLUME);
   const buyCards = liquid
@@ -218,6 +235,7 @@ export async function runReport() {
   // cheap item you already bought keeps showing real P/L instead of "n/a".
   const rows = allRows.filter((r) => r.value >= MIN_VALUE_DIVINE);
   printConsoleReport(rows);
+  attachItemTiming(rows);
 
   const indexState = await fetchIndexState();
   const league = pickCurrentLeague(indexState);
@@ -226,7 +244,10 @@ export async function runReport() {
   const categoryPlaybook = buildCategoryPlaybook(categoryTiming);
   const { buyCards, sellCards } = pickTopOpportunities(rows);
   for (const card of buyCards) {
-    card.timingHint = timingHintText(categoryTiming.get(card.category));
+    // Prefer the item's own reliable window when it has one; the category
+    // hint is still useful background even then, so keep both rather than
+    // picking one.
+    card.categoryTimingHint = timingHintText(categoryTiming.get(card.category));
   }
 
   const purchases = await loadPurchases(password);

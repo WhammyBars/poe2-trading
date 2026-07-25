@@ -13,7 +13,12 @@
 // coverage thresholds this returns an "insufficient data" state instead of a
 // misleading chart, since a handful of samples can look like a pattern by
 // pure chance.
-import { getAllHistoryForCategory, getAllDailyHistoryForCategory } from "./db.js";
+import {
+  getAllHistoryForCategory,
+  getAllDailyHistoryForCategory,
+  getFullHistoryForItem,
+  getDailyHistoryForItem,
+} from "./db.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_NAMES_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -54,31 +59,32 @@ function finalizeBuckets(buckets, labelFor) {
   }));
 }
 
-function computeHourOfDay(categoryKeys) {
+// Buckets a single item-ordered stream of {itemKey, ts, primaryValue} rows —
+// shared by both the category-pooled path (many items concatenated) and the
+// single-item path (see computeItemSeasonality below). Resets the
+// prev-value baseline on every itemKey change so pooling several items
+// never computes a delta across two different items' prices.
+function bucketByHour(rows) {
   const hourBuckets = makeBuckets(24);
   const distinctDays = new Set();
-
-  for (const cat of categoryKeys) {
-    const rows = getAllHistoryForCategory(cat);
-    let prevKey = null;
-    let prevVal = null;
-    for (const r of rows) {
-      if (r.itemKey !== prevKey) {
-        prevKey = r.itemKey;
-        prevVal = null;
-      }
-      distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
-
-      if (prevVal != null && prevVal !== 0) {
-        const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
-        const hour = sgtDate(r.ts).getUTCHours();
-        hourBuckets[hour].sum += pct;
-        hourBuckets[hour].n += 1;
-        if (pct < 0) hourBuckets[hour].downTicks += 1;
-        else if (pct > 0) hourBuckets[hour].upTicks += 1;
-      }
-      prevVal = r.primaryValue;
+  let prevKey = null;
+  let prevVal = null;
+  for (const r of rows) {
+    if (r.itemKey !== prevKey) {
+      prevKey = r.itemKey;
+      prevVal = null;
     }
+    distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
+
+    if (prevVal != null && prevVal !== 0) {
+      const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
+      const hour = sgtDate(r.ts).getUTCHours();
+      hourBuckets[hour].sum += pct;
+      hourBuckets[hour].n += 1;
+      if (pct < 0) hourBuckets[hour].downTicks += 1;
+      else if (pct > 0) hourBuckets[hour].upTicks += 1;
+    }
+    prevVal = r.primaryValue;
   }
 
   return {
@@ -87,31 +93,27 @@ function computeHourOfDay(categoryKeys) {
   };
 }
 
-function computeDayOfWeek(categoryKeys) {
+function bucketByDay(rows) {
   const dayBuckets = makeBuckets(7);
   const distinctDays = new Set();
-
-  for (const cat of categoryKeys) {
-    const rows = getAllDailyHistoryForCategory(cat);
-    let prevKey = null;
-    let prevVal = null;
-    for (const r of rows) {
-      if (r.itemKey !== prevKey) {
-        prevKey = r.itemKey;
-        prevVal = null;
-      }
-      distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
-
-      if (prevVal != null && prevVal !== 0) {
-        const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
-        const dow = (sgtDate(r.ts).getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
-        dayBuckets[dow].sum += pct;
-        dayBuckets[dow].n += 1;
-        if (pct < 0) dayBuckets[dow].downTicks += 1;
-        else if (pct > 0) dayBuckets[dow].upTicks += 1;
-      }
-      prevVal = r.primaryValue;
+  let prevKey = null;
+  let prevVal = null;
+  for (const r of rows) {
+    if (r.itemKey !== prevKey) {
+      prevKey = r.itemKey;
+      prevVal = null;
     }
+    distinctDays.add(sgtDate(r.ts).toISOString().slice(0, 10));
+
+    if (prevVal != null && prevVal !== 0) {
+      const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
+      const dow = (sgtDate(r.ts).getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
+      dayBuckets[dow].sum += pct;
+      dayBuckets[dow].n += 1;
+      if (pct < 0) dayBuckets[dow].downTicks += 1;
+      else if (pct > 0) dayBuckets[dow].upTicks += 1;
+    }
+    prevVal = r.primaryValue;
   }
 
   return {
@@ -120,17 +122,44 @@ function computeDayOfWeek(categoryKeys) {
   };
 }
 
+function statusFor(daysSpanned, preliminaryDays, solidDays) {
+  return daysSpanned >= solidDays ? "solid" : daysSpanned >= preliminaryDays ? "preliminary" : "insufficient";
+}
+
 export function computeSeasonality(categoryKeys) {
-  const { hourOfDay, daysSpanned: hourDaysSpanned } = computeHourOfDay(categoryKeys);
-  const { dayOfWeek, daysSpanned: dayDaysSpanned } = computeDayOfWeek(categoryKeys);
+  const hourRows = categoryKeys.flatMap((cat) => getAllHistoryForCategory(cat));
+  const dayRows = categoryKeys.flatMap((cat) => getAllDailyHistoryForCategory(cat));
+  const { hourOfDay, daysSpanned: hourDaysSpanned } = bucketByHour(hourRows);
+  const { dayOfWeek, daysSpanned: dayDaysSpanned } = bucketByDay(dayRows);
 
   return {
     hourOfDay,
     dayOfWeek,
     hourDaysSpanned,
     dayDaysSpanned,
-    hourStatus: hourDaysSpanned >= HOUR_SOLID_DAYS ? "solid" : hourDaysSpanned >= HOUR_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
-    dayStatus: dayDaysSpanned >= DAY_SOLID_DAYS ? "solid" : dayDaysSpanned >= DAY_PRELIMINARY_DAYS ? "preliminary" : "insufficient",
+    hourStatus: statusFor(hourDaysSpanned, HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS),
+    dayStatus: statusFor(dayDaysSpanned, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS),
+    thresholds: { HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS },
+  };
+}
+
+// Same shape as computeSeasonality, but scoped to one item's own history
+// instead of pooling a whole category. Much smaller sample sizes (a single
+// item's daily closes, ~1/{item count} of a category's pooled ticks), so the
+// 95%-confidence reliability gate in bestDip/bestPump will rightly return
+// "no reliable pattern" for most items — that's the honest result of not
+// having enough independent samples yet, not a bug.
+export function computeItemSeasonality(itemKey) {
+  const { hourOfDay, daysSpanned: hourDaysSpanned } = bucketByHour(getFullHistoryForItem(itemKey));
+  const { dayOfWeek, daysSpanned: dayDaysSpanned } = bucketByDay(getDailyHistoryForItem(itemKey));
+
+  return {
+    hourOfDay,
+    dayOfWeek,
+    hourDaysSpanned,
+    dayDaysSpanned,
+    hourStatus: statusFor(hourDaysSpanned, HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS),
+    dayStatus: statusFor(dayDaysSpanned, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS),
     thresholds: { HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS },
   };
 }
