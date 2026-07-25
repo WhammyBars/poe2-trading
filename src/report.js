@@ -146,6 +146,24 @@ function attachItemTiming(rows) {
   }
 }
 
+// The direct "buy this specific item on day X, sell it on day Y" answer —
+// only items where BOTH sides clear the reliability bar (not just one),
+// since a buy-only or sell-only hit isn't a complete, actionable pair.
+// Requires attachItemTiming(rows) to have already run.
+function buildItemPlaybook(rows) {
+  return rows
+    .filter((r) => (r.buyDay || r.buyHour) && (r.sellDay || r.sellHour))
+    .map((r) => ({
+      name: r.name,
+      category: r.category,
+      buyDay: r.buyDay,
+      buyHour: r.buyHour,
+      sellDay: r.sellDay,
+      sellHour: r.sellHour,
+    }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+}
+
 function pickTopOpportunities(rows) {
   const liquid = rows.filter((r) => (r.listingCount ?? r.volume ?? 0) >= MIN_LIQUID_VOLUME);
   const buyCards = liquid
@@ -242,6 +260,7 @@ export async function runReport() {
   const seasonality = computeSeasonality(CATEGORIES.map((c) => c.key));
   const categoryTiming = buildCategoryTiming();
   const categoryPlaybook = buildCategoryPlaybook(categoryTiming);
+  const itemPlaybook = buildItemPlaybook(rows);
   const { buyCards, sellCards } = pickTopOpportunities(rows);
   for (const card of buyCards) {
     // Prefer the item's own reliable window when it has one; the category
@@ -261,6 +280,7 @@ export async function runReport() {
     rows,
     seasonality,
     categoryPlaybook,
+    itemPlaybook,
     buyCards,
     sellCards,
     holdings,

@@ -210,6 +210,45 @@ function categoryPlaybookSection(categoryPlaybook) {
   </section>`;
 }
 
+// The complete, actionable "buy this specific item on day X, sell it on day
+// Y" answer — only items where both sides independently clear the 95%
+// reliability bar (see buildItemPlaybook in report.js). Most tracked items
+// won't have enough per-item samples for even one reliable side yet, let
+// alone both, so this list is short and deliberately curated rather than
+// "every item, mostly blank."
+function itemPlaybookSection(itemPlaybook) {
+  if (!itemPlaybook || itemPlaybook.length === 0) {
+    return `<section class="section">
+      <h2>Item buy/sell calendar</h2>
+      <div class="empty-state">
+        <div class="empty-title">No items have both a reliable buy and sell window yet</div>
+        <div class="empty-body">Per-item samples are much smaller than the category-level table above, so this fills in as more history (especially local hourly collection) accumulates. See "Category buy/sell calendar" above for the category-level read on any specific item's category in the meantime.</div>
+      </div>
+    </section>`;
+  }
+  const rowsHtml = itemPlaybook
+    .map(
+      (r) => `<tr>
+        <td>${escapeHtml(r.name)}</td>
+        <td>${escapeHtml(r.category)}</td>
+        <td>${playbookCell(r.buyDay)}</td>
+        <td>${playbookCell(r.buyHour)}</td>
+        <td>${playbookCell(r.sellDay)}</td>
+        <td>${playbookCell(r.sellHour)}</td>
+      </tr>`
+    )
+    .join("\n");
+
+  return `<section class="section">
+    <h2>Item buy/sell calendar</h2>
+    <p class="section-note">The ${itemPlaybook.length} tracked item(s) with a statistically reliable buy window <b>and</b> a reliable sell window (each independently clearing a 95%-confidence bar on that item's own history) &mdash; a buy-only or sell-only hit isn't listed here since it's not a complete pair. Much smaller sample per item than the category table above, so treat any single row as a lean, not a certainty; a blank list for an item just means it doesn't have enough history yet, not that nothing is happening with it.</p>
+    <table>
+      <thead><tr><th>Item</th><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </section>`;
+}
+
 function seasonalitySection(seasonality) {
   const { hourOfDay, dayOfWeek, hourDaysSpanned, dayDaysSpanned, hourStatus, dayStatus, thresholds } = seasonality;
 
@@ -346,6 +385,7 @@ export function buildDashboard({
   rows,
   seasonality,
   categoryPlaybook,
+  itemPlaybook,
   buyCards,
   sellCards,
   holdings,
@@ -539,6 +579,8 @@ export function buildDashboard({
   </section>
 
   ${categoryPlaybookSection(categoryPlaybook)}
+
+  ${itemPlaybookSection(itemPlaybook)}
 
   ${seasonalitySection(seasonality)}
 
