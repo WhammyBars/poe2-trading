@@ -172,10 +172,10 @@ function seasonalitySection(seasonality) {
 
   return `<section class="section">
     <h2>Calendar patterns</h2>
-    <p class="section-note">Average hour-over-hour % price change, bucketed by UTC hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). The same calculation run per-category (more specific, but needs more history to unlock) drives the "historically dips&hellip;" note on the Buy cards above.</p>
+    <p class="section-note">Average hour-over-hour % price change, bucketed by Singapore-time (SGT, UTC+8) hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). The same calculation run per-category (more specific, but needs more history to unlock) drives the "historically dips&hellip;" note on the Buy cards above.</p>
     <div class="two-col">
       <div>
-        <h3>By hour of day (UTC)</h3>
+        <h3>By hour of day (Singapore time)</h3>
         ${hourBlock}
       </div>
       <div>

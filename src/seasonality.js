@@ -8,6 +8,11 @@ import { getAllHistoryForCategory } from "./db.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// Timestamps are stored in UTC, but the buckets are for a Singapore-based
+// user — Singapore is a fixed UTC+8 with no DST, so a flat offset is exact
+// (no need for Intl/timezone-db lookups).
+const SGT_OFFSET_MS = 8 * 3600 * 1000;
+
 // Days of calendar coverage needed before a bucket is shown at all / called solid.
 const HOUR_PRELIMINARY_DAYS = 2;
 const HOUR_SOLID_DAYS = 7;
@@ -30,14 +35,14 @@ export function computeSeasonality(categoryKeys) {
         prevKey = r.itemKey;
         prevVal = null;
       }
-      const dayStr = r.ts.slice(0, 10);
+      const dayStr = new Date(new Date(r.ts).getTime() + SGT_OFFSET_MS).toISOString().slice(0, 10);
       distinctDays.add(dayStr);
       if (!minTs || r.ts < minTs) minTs = r.ts;
       if (!maxTs || r.ts > maxTs) maxTs = r.ts;
 
       if (prevVal != null && prevVal !== 0) {
         const pct = ((r.primaryValue - prevVal) / prevVal) * 100;
-        const d = new Date(r.ts);
+        const d = new Date(new Date(r.ts).getTime() + SGT_OFFSET_MS);
         const hour = d.getUTCHours();
         const dow = (d.getUTCDay() + 6) % 7; // remap Sun=0..Sat=6 -> Mon=0..Sun=6
         hourBuckets[hour].sum += pct;
@@ -84,5 +89,5 @@ export function bestDipDay(dayOfWeek, dayStatus) {
 }
 
 export function bestDipHour(hourOfDay, hourStatus) {
-  return bestDip(hourOfDay, hourStatus, (b) => `${String(b.hour).padStart(2, "0")}:00 UTC`);
+  return bestDip(hourOfDay, hourStatus, (b) => `${String(b.hour).padStart(2, "0")}:00 SGT`);
 }
