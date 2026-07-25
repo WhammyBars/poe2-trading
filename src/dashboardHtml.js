@@ -79,6 +79,15 @@ function verdictPill(verdict, provisional) {
   return `<span class="pill ${cls}">${arrow} ${verdict}${provisional ? " *" : ""}</span>`;
 }
 
+function targetLine(r) {
+  if (r.buyTarget == null && r.sellTarget == null) return "";
+  const cur = escapeHtml(r.currency ?? "");
+  const parts = [];
+  if (r.buyTarget != null) parts.push(`buy &le; ${fmtNum(r.buyTarget)} ${cur}`);
+  if (r.sellTarget != null) parts.push(`sell &ge; ${fmtNum(r.sellTarget)} ${cur}`);
+  return `<div class="opp-target">${parts.join(" &middot; ")}</div>`;
+}
+
 function opportunityCard(r) {
   return `<div class="opp-card">
     <div class="opp-head">
@@ -87,7 +96,9 @@ function opportunityCard(r) {
     </div>
     <div class="opp-sub">${escapeHtml(r.category)} &middot; ${valueDisplay(r.value, r.currency)}</div>
     ${sparklineSvg(r.sparkData, r.verdict)}
+    ${targetLine(r)}
     <div class="opp-reason">${escapeHtml(r.reason)}</div>
+    ${r.timingHint ? `<div class="opp-timing">${escapeHtml(r.timingHint)}</div>` : ""}
   </div>`;
 }
 
@@ -148,7 +159,7 @@ function seasonalitySection(seasonality) {
 
   return `<section class="section">
     <h2>Calendar patterns</h2>
-    <p class="section-note">Average hour-over-hour % price change, bucketed by UTC hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this). Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window).</p>
+    <p class="section-note">Average hour-over-hour % price change, bucketed by UTC hour-of-day and day-of-week, computed from our own local history (poe.ninja's sparkline only covers ~7 recent points — too short for this) and pooled across every tracked category. Blue = prices tend to fall in that bucket (dip window); red = prices tend to rise (pump window). The same calculation run per-category (more specific, but needs more history to unlock) drives the "historically dips&hellip;" note on the Buy cards above.</p>
     <div class="two-col">
       <div>
         <h3>By hour of day (UTC)</h3>
@@ -190,6 +201,7 @@ function holdingsSection(holdings) {
         <td class="num">${h.currentValue != null ? valueDisplay(h.currentValue, h.currency) : "n/a"}</td>
         <td class="num">${pctBadge(h.pctChange)}</td>
         <td>${h.verdict ? verdictPill(h.verdict, h.provisional) : `<span class="pill pill-neutral">n/a</span>`}</td>
+        <td class="num">${h.sellTarget != null ? fmtNum(h.sellTarget) + " " + escapeHtml(h.currency ?? "") : "n/a"}</td>
         <td class="reason">${h.reason ? escapeHtml(h.reason) : "Item no longer in tracked categories."}</td>
       </tr>`
     )
@@ -197,12 +209,20 @@ function holdingsSection(holdings) {
 
   return `<section class="section">
     <h2>Your holdings</h2>
-    <p class="section-note">Cost basis is the weighted average of everything logged as purchased. This is your P/L laid next to the same market signal used everywhere else on this page &mdash; still informational only, the call is yours.</p>
+    <p class="section-note">Cost basis is the weighted average of everything logged as purchased. This is your P/L laid next to the same market signal used everywhere else on this page &mdash; still informational only, the call is yours. "Sell target" is the price at which our own signal would flip to SELL.</p>
     <table>
-      <thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Current</th><th class="num">P/L</th><th>Signal</th><th>Why</th></tr></thead>
+      <thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Current</th><th class="num">P/L</th><th>Signal</th><th class="num">Sell target</th><th>Why</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   </section>`;
+}
+
+function targetCell(r) {
+  if (r.buyTarget == null && r.sellTarget == null) return "n/a";
+  const parts = [];
+  if (r.buyTarget != null) parts.push(`&le;${fmtNum(r.buyTarget)}`);
+  if (r.sellTarget != null) parts.push(`&ge;${fmtNum(r.sellTarget)}`);
+  return parts.join(" / ");
 }
 
 function tableRows(rows) {
@@ -215,6 +235,7 @@ function tableRows(rows) {
         <td class="num">${r.volume != null ? Math.round(r.volume).toLocaleString() : ""}</td>
         <td>${verdictPill(r.verdict, r.provisional)}</td>
         <td class="num">${r.z == null ? "n/a" : r.z.toFixed(2)}</td>
+        <td class="num" title="Price level our own signal would flip BUY/SELL at (buy &le; / sell &ge;).">${targetCell(r)}</td>
         <td>${sparklineSvg(r.sparkData, r.verdict)}</td>
         <td class="reason">${escapeHtml(r.reason)}</td>
       </tr>`
@@ -319,7 +340,9 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
   .opp-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
   .opp-name { font-weight: 600; font-size: 0.92rem; }
   .opp-sub { color: var(--text-secondary); font-size: 0.78rem; margin: 0.2rem 0 0.4rem; }
+  .opp-target { font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 0.35rem; }
   .opp-reason { color: var(--text-secondary); font-size: 0.78rem; margin-top: 0.35rem; }
+  .opp-timing { color: var(--text-muted); font-size: 0.74rem; font-style: italic; margin-top: 0.3rem; }
 
   .pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
   .pill-good { background: var(--pill-good-bg); color: var(--status-good); }
@@ -417,6 +440,7 @@ export function buildDashboard({ league, generatedAt, trailingHours, rows, seaso
           <th data-key="volume" class="num">Volume (divine)</th>
           <th data-key="verdict">Signal</th>
           <th data-key="z" class="num">z</th>
+          <th class="num">Target (buy/sell)</th>
           <th>Trend</th>
           <th>Why</th>
         </tr>
@@ -430,7 +454,11 @@ ${tableRows(rows)}
   <div class="disclaimer">
     Signal logic: BUY/SELL requires either a z-score vs. this item's own trailing average (once 3+ local hourly samples exist)
     confirmed by sparkline momentum, or, before that, poe.ninja's own 7-point sparkline trend as a provisional read.
-    See README.md and src/signal.js for the exact rules. This tool reads public data only and takes no in-game action.
+    Target prices (buy &le; / sell &ge;) are the trailing mean &plusmn; the same z-score threshold used for the verdict &mdash;
+    i.e. the exact price at which this tool's own signal would flip. The "historically dips&hellip;" timing note is that
+    item's category, not the item itself (too few per-item samples yet), and only appears once a bucket has 3+ independent
+    readings. See README.md and src/signal.js / src/seasonality.js for the exact rules. This tool reads public data only and
+    takes no in-game action.
   </div>
 </div>
 <script>

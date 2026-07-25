@@ -65,3 +65,24 @@ export function computeSeasonality(categoryKeys) {
     thresholds: { HOUR_PRELIMINARY_DAYS, HOUR_SOLID_DAYS, DAY_PRELIMINARY_DAYS, DAY_SOLID_DAYS },
   };
 }
+
+// Minimum independent samples in a single bucket before we'll name it as a
+// specific "buy on this day/hour" recommendation — a couple of stray points
+// can look like a dip window by pure chance.
+const MIN_BUCKET_SAMPLES = 3;
+
+function bestDip(buckets, status, labelKey, minN = MIN_BUCKET_SAMPLES) {
+  if (status === "insufficient") return null;
+  const candidates = buckets.filter((b) => b.n >= minN && b.avgPct < 0);
+  if (!candidates.length) return null;
+  const best = candidates.reduce((a, b) => (b.avgPct < a.avgPct ? b : a));
+  return { label: labelKey(best), avgPct: best.avgPct, n: best.n, preliminary: status === "preliminary" };
+}
+
+export function bestDipDay(dayOfWeek, dayStatus) {
+  return bestDip(dayOfWeek, dayStatus, (b) => b.day);
+}
+
+export function bestDipHour(hourOfDay, hourStatus) {
+  return bestDip(hourOfDay, hourStatus, (b) => `${String(b.hour).padStart(2, "0")}:00 UTC`);
+}

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { CATEGORIES } from "./categories.js";
 import { getItemsForCategory, getTrailingHistory, closeDb } from "./db.js";
 import { computeSignal } from "./signal.js";
-import { computeSeasonality } from "./seasonality.js";
+import { computeSeasonality, bestDipDay, bestDipHour } from "./seasonality.js";
 import { fetchIndexState, pickCurrentLeague } from "./api.js";
 import { buildDashboard, buildGateShell } from "./dashboardHtml.js";
 import { loadPurchases, aggregateHoldings } from "./purchases.js";
@@ -73,6 +73,30 @@ function buildReportRows() {
   return rows;
 }
 
+// Per-category (not pooled-across-everything) calendar pattern, so "buy this
+// on Wednesdays" is actually about the category the item lives in rather than
+// a blend of all twelve. Cheap to compute — same query the global chart uses,
+// just scoped to one category's item keys at a time.
+function buildCategoryTiming() {
+  const timing = new Map();
+  for (const cat of CATEGORIES) {
+    const s = computeSeasonality([cat.key]);
+    timing.set(cat.label, {
+      day: bestDipDay(s.dayOfWeek, s.dayStatus),
+      hour: bestDipHour(s.hourOfDay, s.hourStatus),
+    });
+  }
+  return timing;
+}
+
+function timingHintText(hint) {
+  if (!hint || (!hint.day && !hint.hour)) return null;
+  const parts = [];
+  if (hint.day) parts.push(`${hint.day.label}s (avg ${hint.day.avgPct.toFixed(1)}%, n=${hint.day.n}${hint.day.preliminary ? ", preliminary" : ""})`);
+  if (hint.hour) parts.push(`around ${hint.hour.label} (avg ${hint.hour.avgPct.toFixed(1)}%, n=${hint.hour.n}${hint.hour.preliminary ? ", preliminary" : ""})`);
+  return `This category has historically dipped ${parts.join(" and ")}.`;
+}
+
 function pickTopOpportunities(rows) {
   const liquid = rows.filter((r) => (r.listingCount ?? r.volume ?? 0) >= MIN_LIQUID_VOLUME);
   const buyCards = liquid
@@ -125,6 +149,7 @@ function buildHoldings(purchaseHoldings, rows) {
       pctChange,
       verdict: row?.verdict ?? null,
       provisional: row?.provisional ?? false,
+      sellTarget: row?.sellTarget ?? null,
       reason: row?.reason ?? null,
     };
   });
@@ -149,7 +174,11 @@ export async function runReport() {
   const indexState = await fetchIndexState();
   const league = pickCurrentLeague(indexState);
   const seasonality = computeSeasonality(CATEGORIES.map((c) => c.key));
+  const categoryTiming = buildCategoryTiming();
   const { buyCards, sellCards } = pickTopOpportunities(rows);
+  for (const card of buyCards) {
+    card.timingHint = timingHintText(categoryTiming.get(card.category));
+  }
 
   const purchases = await loadPurchases(password);
   const holdings = buildHoldings(aggregateHoldings(purchases), allRows);

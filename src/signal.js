@@ -41,6 +41,8 @@ export function computeSignal({ currentValue, history, sparkline }) {
       provisional: true,
       z: null,
       momentum,
+      buyTarget: null,
+      sellTarget: null,
       reason: `Only ${n}/${MIN_SAMPLES} local samples so far — using poe.ninja's sparkline instead: ${totalChange.toFixed(1)}% total change over its last 7 points.`,
     };
   }
@@ -48,6 +50,10 @@ export function computeSignal({ currentValue, history, sparkline }) {
   const avg = mean(values);
   const sd = stddev(values, avg);
   const z = sd > 0 ? (currentValue - avg) / sd : 0;
+  // Same mean/stddev/threshold the verdict itself uses, so these read as
+  // "the price at which our own signal would flip" rather than a separate model.
+  const buyTarget = sd > 0 ? avg - Z_THRESHOLD * sd : null;
+  const sellTarget = sd > 0 ? avg + Z_THRESHOLD * sd : null;
 
   let verdict = "HOLD";
   let reason;
@@ -61,5 +67,5 @@ export function computeSignal({ currentValue, history, sparkline }) {
     reason = `z=${z.toFixed(2)} vs trailing average (${avg.toFixed(4)}) over ${n} samples; momentum ${momentum >= 0 ? "+" : ""}${momentum.toFixed(2)} pts — no clear edge.`;
   }
 
-  return { verdict, provisional: false, z, momentum, mean: avg, stddev: sd, n, reason };
+  return { verdict, provisional: false, z, momentum, mean: avg, stddev: sd, n, buyTarget, sellTarget, reason };
 }
