@@ -1,0 +1,37 @@
+name: Zero cost basis on all purchases
+
+# Manual-only, one-off correction: sets pricePerUnit = 0 on every entry in
+# the encrypted purchase log (docs/purchases.enc.json) without the password
+# ever leaving GitHub's secret store or being typed anywhere outside this form.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  zero-cost-basis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Zero out cost basis on all logged purchases
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: node --disable-warning=ExperimentalWarning src/zeroCostBasisCi.js
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/purchases.enc.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Zero cost basis on all logged purchases"
+            git push
+          fi
