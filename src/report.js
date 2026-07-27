@@ -2,9 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATEGORIES } from "./categories.js";
-import { getItemsForCategory, getTrailingHistory, closeDb } from "./db.js";
+import { getItemsForCategory, getTrailingHistory, getDailyHistoryForItem, getAllDailyHistoryForCategory, closeDb } from "./db.js";
 import { computeSignal } from "./signal.js";
-import { computeSeasonality, computeItemSeasonality, bestDipDay, bestDipHour, bestPumpDay, bestPumpHour } from "./seasonality.js";
+import {
+  computeSeasonality,
+  computeItemSeasonality,
+  bestDipDay,
+  bestDipHour,
+  bestPumpDay,
+  bestPumpHour,
+  backtestRoundTrip,
+} from "./seasonality.js";
 import { fetchIndexState, pickCurrentLeague } from "./api.js";
 import { buildDashboard, buildGateShell } from "./dashboardHtml.js";
 import { loadPurchases, aggregateHoldings } from "./purchases.js";
@@ -84,11 +92,28 @@ function buildCategoryTiming() {
   const timing = new Map();
   for (const cat of CATEGORIES) {
     const s = computeSeasonality([cat.key]);
+    let dipDay = bestDipDay(s.dayOfWeek, s.dayStatus);
+    let pumpDay = bestPumpDay(s.dayOfWeek, s.dayStatus);
+    // dipDay and pumpDay are each independently "reliable" (95%-confidence
+    // directional lean), but that doesn't mean buying on dipDay and selling
+    // on the next pumpDay actually made money historically — validate the
+    // specific round trip before presenting it as a pair (see
+    // backtestRoundTrip in seasonality.js). If it doesn't hold up, drop
+    // both rather than show a pairing that back-tests as a loss.
+    let roundTrip = null;
+    if (dipDay && pumpDay) {
+      roundTrip = backtestRoundTrip(getAllDailyHistoryForCategory(cat.key), dipDay.raw.day, pumpDay.raw.day);
+      if (!roundTrip) {
+        dipDay = null;
+        pumpDay = null;
+      }
+    }
     timing.set(cat.label, {
-      dipDay: bestDipDay(s.dayOfWeek, s.dayStatus),
+      dipDay,
       dipHour: bestDipHour(s.hourOfDay, s.hourStatus),
-      pumpDay: bestPumpDay(s.dayOfWeek, s.dayStatus),
+      pumpDay,
       pumpHour: bestPumpHour(s.hourOfDay, s.hourStatus),
+      roundTrip,
     });
   }
   return timing;
@@ -139,16 +164,32 @@ function buildCategoryPlaybook(categoryTiming) {
 function attachItemTiming(rows) {
   for (const r of rows) {
     const s = computeItemSeasonality(r.itemKey);
-    r.buyDay = bestDipDay(s.dayOfWeek, s.dayStatus);
+    let buyDay = bestDipDay(s.dayOfWeek, s.dayStatus);
+    let sellDay = bestPumpDay(s.dayOfWeek, s.dayStatus);
     r.buyHour = bestDipHour(s.hourOfDay, s.hourStatus);
-    r.sellDay = bestPumpDay(s.dayOfWeek, s.dayStatus);
     r.sellHour = bestPumpHour(s.hourOfDay, s.hourStatus);
+    // Same round-trip validation as buildCategoryTiming, scoped to this
+    // item's own history — see the comment there for why independently
+    // "reliable" buy/sell days aren't enough on their own.
+    r.roundTrip = null;
+    if (buyDay && sellDay) {
+      r.roundTrip = backtestRoundTrip(getDailyHistoryForItem(r.itemKey), buyDay.raw.day, sellDay.raw.day);
+      if (!r.roundTrip) {
+        buyDay = null;
+        sellDay = null;
+      }
+    }
+    r.buyDay = buyDay;
+    r.sellDay = sellDay;
   }
 }
 
 // The direct "buy this specific item on day X, sell it on day Y" answer —
 // only items where BOTH sides clear the reliability bar (not just one),
-// since a buy-only or sell-only hit isn't a complete, actionable pair.
+// since a buy-only or sell-only hit isn't a complete, actionable pair. When
+// buyDay/sellDay are both present they've also passed the roundTrip
+// backtest (see attachItemTiming) — a buyHour/sellHour-only pairing hasn't,
+// since there's no continuous-enough hourly history yet to backtest that.
 // Requires attachItemTiming(rows) to have already run.
 function buildItemPlaybook(rows) {
   return rows
@@ -160,6 +201,7 @@ function buildItemPlaybook(rows) {
       buyHour: r.buyHour,
       sellDay: r.sellDay,
       sellHour: r.sellHour,
+      roundTrip: r.roundTrip,
     }))
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }

@@ -181,6 +181,18 @@ function playbookCell(bucket) {
   return `${escapeHtml(bucket.label)} <span class="rate-note" title="95% Wilson-score floor ${(bucket.rateLowerBound * 100).toFixed(0)}%, n=${bucket.n}${bucket.preliminary ? ", preliminary" : ""}">(${pct}%, n=${bucket.n})</span>`;
 }
 
+// The buy/sell day pair only reaches this table after its actual round trip
+// (buy on buyDay, sell on the next sellDay) has itself cleared the 95%
+// reliability bar on real historical prices — see backtestRoundTrip in
+// seasonality.js. This cell shows that backtest, not just the two
+// independent directional stats behind it.
+function roundTripCell(rt) {
+  if (!rt) return `<span class="pill pill-neutral">n/a</span>`;
+  const sign = rt.avgPct >= 0 ? "+" : "";
+  const winPct = (rt.winRate * 100).toFixed(0);
+  return `<span class="rate-note" title="95% Wilson-score floor ${(rt.winRateLowerBound * 100).toFixed(0)}% profitable, n=${rt.n} round trips">${winPct}% profitable, avg ${sign}${rt.avgPct.toFixed(1)}% (n=${rt.n})</span>`;
+}
+
 // One row per tracked category, independent of any live BUY/SELL signal —
 // this is the direct "what do I buy and on which day, what do I sell and on
 // which day" answer, since the pooled/global calendar chart above gets
@@ -196,15 +208,16 @@ function categoryPlaybookSection(categoryPlaybook) {
         <td>${playbookCell(r.dipHour)}</td>
         <td>${playbookCell(r.pumpDay)}</td>
         <td>${playbookCell(r.pumpHour)}</td>
+        <td>${roundTripCell(r.roundTrip)}</td>
       </tr>`
     )
     .join("\n");
 
   return `<section class="section">
     <h2>Category buy/sell calendar</h2>
-    <p class="section-note">Per-category (not pooled) reliable timing windows: a day/hour only appears here if, at 95% confidence, its down-tick rate (buy day/hour) or up-tick rate (sell day/hour) is above 50% &mdash; see the "Calendar patterns" section below for what that means. Applies to the category as a whole, not any single item within it (too few per-item samples yet). "No reliable pattern yet" is an honest result, not a bug &mdash; not every category has a real cyclical edge on top of its overall trend.</p>
+    <p class="section-note">Per-category (not pooled) reliable timing windows: a day/hour only appears here if, at 95% confidence, its down-tick rate (buy day/hour) or up-tick rate (sell day/hour) is above 50% &mdash; see the "Calendar patterns" section below for what that means. Applies to the category as a whole, not any single item within it (too few per-item samples yet). When both a buy day and sell day appear, that specific round trip (buy on the buy day, sell on the next occurrence of the sell day) has also been backtested against real historical prices and cleared its own 95%-confidence bar &mdash; see the "Round trip" column; two independently-reliable days that don't compose into a profitable trade get dropped rather than shown as a pair. "No reliable pattern yet" is an honest result, not a bug &mdash; not every category has a real cyclical edge on top of its overall trend.</p>
     <table>
-      <thead><tr><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th></tr></thead>
+      <thead><tr><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th><th>Round trip (buy&rarr;sell)</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   </section>`;
@@ -235,15 +248,16 @@ function itemPlaybookSection(itemPlaybook) {
         <td>${playbookCell(r.buyHour)}</td>
         <td>${playbookCell(r.sellDay)}</td>
         <td>${playbookCell(r.sellHour)}</td>
+        <td>${roundTripCell(r.roundTrip)}</td>
       </tr>`
     )
     .join("\n");
 
   return `<section class="section">
     <h2>Item buy/sell calendar</h2>
-    <p class="section-note">The ${itemPlaybook.length} tracked item(s) with a statistically reliable buy window <b>and</b> a reliable sell window (each independently clearing a 95%-confidence bar on that item's own history) &mdash; a buy-only or sell-only hit isn't listed here since it's not a complete pair. Much smaller sample per item than the category table above, so treat any single row as a lean, not a certainty; a blank list for an item just means it doesn't have enough history yet, not that nothing is happening with it.</p>
+    <p class="section-note">The ${itemPlaybook.length} tracked item(s) with a statistically reliable buy window <b>and</b> a reliable sell window (each independently clearing a 95%-confidence bar on that item's own history) &mdash; a buy-only or sell-only hit isn't listed here since it's not a complete pair. When Buy day and Sell day are both a day-of-week (not just an hour), that pairing has also been backtested as an actual round trip &mdash; buy on the buy day, sell on the next occurrence of the sell day, using this item's real historical closes &mdash; and only kept if that round trip itself clears a 95%-confidence bar for being profitable (see the "Round trip" column). Two independently-reliable days don't automatically make a profitable trade, especially mid-trend; this is why. Much smaller sample per item than the category table above, so treat any single row as a lean, not a certainty; a blank list for an item just means it doesn't have enough history yet, not that nothing is happening with it.</p>
     <table>
-      <thead><tr><th>Item</th><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th></tr></thead>
+      <thead><tr><th>Item</th><th>Category</th><th>Buy day</th><th>Buy hour (SGT)</th><th>Sell day</th><th>Sell hour (SGT)</th><th>Round trip (buy&rarr;sell)</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   </section>`;

@@ -199,6 +199,10 @@ function bestByRate(buckets, status, labelKey, rateKey, boundKey) {
     rate: best[rateKey],
     rateLowerBound: best[boundKey],
     preliminary: status === "preliminary",
+    // The underlying bucket (has .day or .hour) — lets callers that need the
+    // raw weekday/hour, rather than the formatted label, get it back out
+    // without re-parsing dayLabel()'s "Mondays" string.
+    raw: best,
   };
 }
 
@@ -220,4 +224,58 @@ export function bestPumpDay(dayOfWeek, dayStatus) {
 
 export function bestPumpHour(hourOfDay, hourStatus) {
   return bestByRate(hourOfDay, hourStatus, hourLabel, "pumpRate", "pumpRateLowerBound");
+}
+
+const DOW_INDEX = Object.fromEntries(DAY_NAMES.map((abbr, i) => [abbr, i]));
+
+// bestDipDay/bestPumpDay each independently ask "does this day's tick lean
+// down/up more often than chance?" — that's a statement about the delta
+// from the *previous* day, not about whether buying on the dip day and
+// selling on the pump day actually turns a profit. Two reliable directional
+// days don't automatically compose into a profitable trade, especially when
+// the underlying item is mid-trend (a multi-day drift swallows any single
+// weekday's edge). This directly backtests that specific round trip instead
+// of assuming it: for every historical occurrence of buyDayAbbr, find the
+// next occurrence of sellDayAbbr and check whether the price actually rose.
+// Pools by itemKey first so a category's multi-item rows are backtested
+// per-item and then combined, rather than one item's Tuesday close getting
+// matched against a different item's Friday close on the same calendar date.
+export function backtestRoundTrip(dailyRows, buyDayAbbr, sellDayAbbr) {
+  const buyDow = DOW_INDEX[buyDayAbbr];
+  const sellDow = DOW_INDEX[sellDayAbbr];
+  const offsetDays = ((sellDow - buyDow + 7) % 7) || 7;
+
+  const byItem = new Map();
+  for (const r of dailyRows) {
+    if (!byItem.has(r.itemKey)) byItem.set(r.itemKey, new Map());
+    byItem.get(r.itemKey).set(sgtDate(r.ts).toISOString().slice(0, 10), r.primaryValue);
+  }
+
+  let n = 0;
+  let sumPct = 0;
+  let wins = 0;
+  for (const byDate of byItem.values()) {
+    for (const [dateStr, buyPrice] of byDate) {
+      if (!buyPrice) continue;
+      const dow = (new Date(`${dateStr}T00:00:00Z`).getUTCDay() + 6) % 7;
+      if (dow !== buyDow) continue;
+      const sellDateStr = new Date(new Date(`${dateStr}T00:00:00Z`).getTime() + offsetDays * 86400000)
+        .toISOString()
+        .slice(0, 10);
+      const sellPrice = byDate.get(sellDateStr);
+      if (sellPrice == null) continue;
+      n += 1;
+      const pct = ((sellPrice - buyPrice) / buyPrice) * 100;
+      sumPct += pct;
+      if (pct > 0) wins += 1;
+    }
+  }
+
+  // Same 95%-confidence bar as every other "reliable" claim in this file —
+  // returns null (not just a low number) below it, so a caller can fall
+  // back to "no reliable pattern" instead of showing an unvalidated pair.
+  const winRateLowerBound = wilsonLowerBound(wins, n);
+  if (winRateLowerBound == null || winRateLowerBound <= RELIABLE_RATE_FLOOR) return null;
+
+  return { n, avgPct: sumPct / n, winRate: wins / n, winRateLowerBound };
 }
