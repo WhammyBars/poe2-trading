@@ -130,6 +130,45 @@ currently moving:
 Before 3 samples exist, it falls back to poe.ninja's own sparkline
 `totalChange` as a provisional read (clearly labeled `*` / "provisional").
 
+### Trend regime (counter-trend caution)
+
+The z-score above only ever looks at the trailing window (`POE2_TRAILING_HOURS`,
+default 72h) — it can't tell a dip inside a multi-week **uptrend** (where
+mean-reversion has actually been working) from the next leg down in a
+multi-week **downtrend** (where the "dip" may just continue). `computeTrend`
+in `src/signal.js` separately classifies each item's own daily-close history
+(backfilled to league start — see `backfillDailyHistory.js`) as UPTREND /
+DOWNTREND / RANGE, by comparing a 7-day average against a 21-day average
+(`REGIME_SHORT_MA_DAYS` / `REGIME_LONG_MA_DAYS`; a 3% gap, `REGIME_THRESHOLD`,
+is required before it's called a trend rather than noise). Below 21 days of
+daily history for an item there's no regime read yet ("INSUFFICIENT").
+
+A BUY that fires while the item is in a DOWNTREND (or a SELL during an
+UPTREND) is flagged `confidence: "counterTrend"` — **never hidden**, but:
+- shown with an amber `⚠` pill instead of the usual green/red one, hover for the exact numbers,
+- ranked below trend-confirmed picks in "Top opportunities" (`confidenceRank` in `report.js`), and
+- gets the item's %-off-all-time-high and regime spelled out directly in the "Why" text.
+
+Every BUY/SELL row's reason also states, unconditionally, how far the current
+price sits from that item's own all-time high — the thing you'd otherwise
+have to query `data/prices.sqlite` by hand to find out.
+
+### League-phase framing (game-sense, not a statistical signal)
+
+`computeLeaguePhase` in `report.js` estimates how far into the league you are
+(EARLY / MID / LATE / OVERDUE), using the earliest backfilled daily close as
+a real proxy for league start, but an **assumed** total league length
+(`POE2_LEAGUE_LENGTH_DAYS`, default 91 days — poe.ninja's API exposes no real
+end date, so override this if the actual one is known). This is deliberately
+kept as informational framing layered on top of the statistical core, the
+same way category/item timing hints are — it never creates or changes a
+BUY/SELL verdict by itself. The one place it does anything: when the phase
+reads LATE, any counter-trend BUY (see above) gets one extra sentence noting
+that challenge leagues typically see sustained sell-off pressure on
+league-specific currency as farming winds down in the final stretch, which
+historically makes counter-trend dip-buys riskier late in a league than the
+same setup earlier on.
+
 ## The reverse-engineered API (undocumented, no official docs exist)
 
 Discovered by downloading poe.ninja's Astro JS bundles (`/_astro/*.mjs`) and

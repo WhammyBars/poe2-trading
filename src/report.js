@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATEGORIES } from "./categories.js";
-import { getItemsForCategory, getTrailingHistory, getDailyHistoryForItem, getAllDailyHistoryForCategory, closeDb } from "./db.js";
-import { computeSignal } from "./signal.js";
+import { getItemsForCategory, getTrailingHistory, getDailyHistoryForItem, getAllDailyHistoryForCategory, getEarliestDailyTimestamp, closeDb } from "./db.js";
+import { computeSignal, computeTrend } from "./signal.js";
 import {
   computeSeasonality,
   computeItemSeasonality,
@@ -39,7 +39,43 @@ function sinceTimestamp(hours) {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
 
-function buildReportRows() {
+// poe.ninja's index-state endpoint doesn't expose a league start/end date, so
+// this is necessarily an estimate: daysElapsed is real (earliest backfilled
+// daily close we actually have — a proxy for league start, since the daily
+// backfill goes back to league start), but the total league length is an
+// assumption (typical ARPG challenge leagues run ~13 weeks/91 days) —
+// override with POE2_LEAGUE_LENGTH_DAYS if the real one is known. This is
+// framing/context for the dashboard and the counter-trend caution text below,
+// never fed into the statistical BUY/SELL verdict itself (see signal.js).
+const ASSUMED_LEAGUE_LENGTH_DAYS = Number(process.env.POE2_LEAGUE_LENGTH_DAYS ?? 91);
+const LEAGUE_PHASE_EDGE_DAYS = 14;
+
+function computeLeaguePhase() {
+  const earliestTs = getEarliestDailyTimestamp();
+  if (!earliestTs) return null;
+  const daysElapsed = Math.floor((Date.now() - new Date(earliestTs).getTime()) / 86400000);
+  let phase = "MID";
+  if (daysElapsed <= LEAGUE_PHASE_EDGE_DAYS) phase = "EARLY";
+  else if (daysElapsed >= ASSUMED_LEAGUE_LENGTH_DAYS - LEAGUE_PHASE_EDGE_DAYS) phase = "LATE";
+  if (daysElapsed > ASSUMED_LEAGUE_LENGTH_DAYS) phase = "OVERDUE"; // our length assumption was probably wrong
+  return { daysElapsed, assumedLengthDays: ASSUMED_LEAGUE_LENGTH_DAYS, edgeDays: LEAGUE_PHASE_EDGE_DAYS, phase, earliestTs };
+}
+
+// Game-sense framing, deliberately layered on here (report.js) rather than
+// inside signal.js's statistical core, same as buildCategoryTiming/
+// timingHintText below — this is a heuristic, not a backtested result, and
+// only ever appends to a caution that's already firing (counter-trend BUY),
+// never changes a verdict or generates a new one on its own.
+function leagueGameSenseNote(leaguePhase) {
+  if (!leaguePhase || leaguePhase.phase !== "LATE") return null;
+  return (
+    "Late-league game-sense note (heuristic, not a statistical signal): challenge leagues typically see " +
+    "sustained sell-off pressure on league-specific currency in the final stretch as farming winds down, " +
+    "which historically makes counter-trend dip-buys riskier than the same setup earlier in the league."
+  );
+}
+
+function buildReportRows(leaguePhase) {
   const since = sinceTimestamp(TRAILING_HOURS);
   const rows = [];
 
@@ -51,11 +87,17 @@ function buildReportRows() {
 
       const current = history[history.length - 1];
       const baseline = history.slice(0, -1);
+      const trend = computeTrend(getDailyHistoryForItem(item.itemKey));
       const signal = computeSignal({
         currentValue: current.primaryValue,
         history: baseline,
         sparkline: current.sparkline,
+        trend,
       });
+      if (signal.verdict === "BUY" && signal.confidence === "counterTrend") {
+        const note = leagueGameSenseNote(leaguePhase);
+        if (note) signal.reason = `${signal.reason} ${note}`;
+      }
 
       rows.push({
         itemKey: item.itemKey,
@@ -206,15 +248,23 @@ function buildItemPlaybook(rows) {
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
+// Trend-confirmed picks (this item's own daily closes agree with the
+// short-term dip/pump direction) rank ahead of counter-trend ones — never
+// hidden (still information the user should see), just not the first thing
+// surfaced in the curated list. See applyTrendContext in signal.js.
+function confidenceRank(r) {
+  return r.confidence === "counterTrend" ? 1 : 0;
+}
+
 function pickTopOpportunities(rows) {
   const liquid = rows.filter((r) => (r.listingCount ?? r.volume ?? 0) >= MIN_LIQUID_VOLUME);
   const buyCards = liquid
     .filter((r) => r.verdict === "BUY")
-    .sort((a, b) => (a.sparkline?.totalChange ?? 0) - (b.sparkline?.totalChange ?? 0))
+    .sort((a, b) => confidenceRank(a) - confidenceRank(b) || (a.sparkline?.totalChange ?? 0) - (b.sparkline?.totalChange ?? 0))
     .slice(0, TOP_N);
   const sellCards = liquid
     .filter((r) => r.verdict === "SELL")
-    .sort((a, b) => (b.sparkline?.totalChange ?? 0) - (a.sparkline?.totalChange ?? 0))
+    .sort((a, b) => confidenceRank(a) - confidenceRank(b) || (b.sparkline?.totalChange ?? 0) - (a.sparkline?.totalChange ?? 0))
     .slice(0, TOP_N);
   return { buyCards, sellCards };
 }
@@ -274,6 +324,8 @@ function buildHoldings(purchaseHoldings, rows) {
       pctChange,
       verdict: row?.verdict ?? null,
       provisional: row?.provisional ?? false,
+      confidence: row?.confidence ?? "normal",
+      trendCaution: row?.trendCaution ?? null,
       sellTarget: row?.sellTarget ?? null,
       reason: row?.reason ?? null,
     };
@@ -289,7 +341,8 @@ export async function runReport() {
     );
   }
 
-  const allRows = buildReportRows();
+  const leaguePhase = computeLeaguePhase();
+  const allRows = buildReportRows(leaguePhase);
   // Everything below MIN_VALUE_DIVINE only trades sensibly in bulk — drop it
   // from the table/cards/tiles. Holdings still joins against allRows so a
   // cheap item you already bought keeps showing real P/L instead of "n/a".
@@ -328,6 +381,7 @@ export async function runReport() {
     holdings,
     netWorth,
     minValueDivine: MIN_VALUE_DIVINE,
+    leaguePhase,
   });
 
   const encrypted = await encryptString(innerHtml, password);

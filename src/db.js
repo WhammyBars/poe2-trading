@@ -208,6 +208,16 @@ export function getDailyHistoryForItem(itemKey) {
   return dailyHistoryForItemStmt.all(itemKey);
 }
 
+const earliestDailyTsStmt = db.prepare(`SELECT MIN(ts) AS ts FROM daily_price_history`);
+
+// Earliest backfilled daily close across every tracked item — a real proxy
+// for "league start" (the daily backfill goes back to league start, see
+// backfillDailyHistory.js), used because poe.ninja's index-state endpoint
+// doesn't expose an actual league start/end date.
+export function getEarliestDailyTimestamp() {
+  return earliestDailyTsStmt.get()?.ts ?? null;
+}
+
 export function closeDb() {
   db.close();
 }
