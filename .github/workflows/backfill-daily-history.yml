@@ -5,9 +5,10 @@ name: Backfill daily price history
 # unlike hourly.yml, which pulls live data every hour. Safe to re-run: the
 # backfill script upserts on (item_key, ts).
 on:
-  schedule:
-    # :17 past 03:00 UTC — well clear of the hourly job's :05 slot.
-    - cron: "17 3 * * *"
+  # Paused: not actively playing right now. Uncomment the cron line to resume.
+  # schedule:
+  #   # :17 past 03:00 UTC — well clear of the hourly job's :05 slot.
+  #   - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:

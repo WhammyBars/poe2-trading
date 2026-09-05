@@ -1,10 +1,11 @@
 name: Hourly price fetch
 
 on:
-  schedule:
-    # :05 past the hour, not :00 — avoids the top-of-hour congestion where
-    # scheduled-workflow triggers across GitHub are most likely to be delayed.
-    - cron: "5 * * * *"
+  # Paused: not actively playing right now. Uncomment the cron line to resume.
+  # schedule:
+  #   # :05 past the hour, not :00 — avoids the top-of-hour congestion where
+  #   # scheduled-workflow triggers across GitHub are most likely to be delayed.
+  #   - cron: "5 * * * *"
   workflow_dispatch:
 
 permissions:
